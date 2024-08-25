@@ -2,6 +2,7 @@ use warp::Filter;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::env;
+use worker::*;
 
 #[tokio::main]
 async fn main() {
