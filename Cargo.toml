@@ -10,17 +10,12 @@ release = false
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
 
-
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
 serde = {version = "1.0.204", features = ["derive"]}
-tokio = {version = "1.39.1", features = ["full"]}
-warp = "0.3.7"
 reqwest = { version = "0.11", features = ["json"] }
-
-worker = { version="0.2.0", features=['http'] }
-worker-macros = { version="0.2.0", features=['http'] }
-console_error_panic_hook = { version = "0.1.1" }
-http = "1.1"
+worker = { version="0.3.4" }
+serde_qs = "0.13.0"
+service-logging = "0.4.7"

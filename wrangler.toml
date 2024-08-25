@@ -4,3 +4,7 @@ compatibility_date = "2024-08-25"
 
 [build]
 command = "cargo install -q worker-build && worker-build --release"
+
+[vars]
+SLACK_CLIENT_ID = "2210535565.6498112565286"
+SLACK_REDIRECT_URI = "https://verify.limeskey.com"
