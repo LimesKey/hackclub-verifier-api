@@ -7,7 +7,7 @@ use reqwest::{Client};
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
     if req.method() == Method::Get {
         let response = handle_oauth(req, env).await;
-        console_log!("Response: {:?}", response);
+        
         response
     } else {
         Response::error("Method Not Allowed", 405)
@@ -38,7 +38,6 @@ async fn handle_oauth(req: Request, env: Env) -> Result<Response> {
     };
 
     console_log!("Client ID: {}", client_id);
-    console_log!("Client Secret: {}", client_secret);
     console_log!("Redirect URI: {}", redirect_uri);
     console_log!("Code: {}", params.code);
 
@@ -78,7 +77,6 @@ pub struct OAuthResponse {
     pub access_token: String,
     pub bot_user_id: String,
     pub team: Team,
-    pub enterprise: Option<Enterprise>, // Optional field, can be null
     pub is_enterprise_install: bool,
     pub error: Option<String>,
 }
@@ -89,16 +87,11 @@ pub struct AuthedUser {
     pub id: String,
 }
 
-// Define the struct for the `team` field
 #[derive(Deserialize, Debug)]
 pub struct Team {
     pub id: String,
     pub name: String,
 }
-
-// Define the struct for the `enterprise` field (can be null)
-#[derive(Deserialize, Debug)]
-pub struct Enterprise; // Empty struct since it's null in the JSON
 
 // Function to exchange authorization code for an access token
 pub async fn exchange_code_for_token(client_id: &str, client_secret: &str, code: &str, redirect_uri: &str) -> Result<OAuthResponse> {
@@ -113,8 +106,10 @@ pub async fn exchange_code_for_token(client_id: &str, client_secret: &str, code:
             ("code", code),
             ("redirect_uri", redirect_uri),
         ]);
-    let response = request.send()
-    .await.unwrap();
 
-    Ok(response.json::<OAuthResponse>().await.unwrap())    
+    let response = request.send().await.unwrap();
+
+    let oauth_response = response.json::<OAuthResponse>().await.unwrap();
+    
+    Ok(oauth_response)
 }
