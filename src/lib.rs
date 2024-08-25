@@ -1,7 +1,8 @@
-use reqwest::Client;
+use reqwest::{header::{HeaderMap, HeaderValue, CONTENT_TYPE}, Client};
 use serde::Deserialize;
 use serde_qs;
 use worker::*;
+use serde_json::Value; 
 
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
@@ -57,8 +58,16 @@ async fn handle_oauth(req: Request, env: Env) -> Result<Response> {
     let mut user_id = String::from("");
     // Process the OAuth response
     if access_token_response.ok {
+        let ysws_status = ysws_api(&access_token_response.authed_user).await;
         user_id = access_token_response.authed_user.id;
-        Response::ok(format!("Successfully authenticated as user {}", user_id))
+
+        if ysws_status == true {
+            return Response::ok(format!("Successfully authenticated as user {}, and you are eligable!", user_id));
+        }
+        else {
+            return Response::ok(format!("Successfully authenticated as user {}, but you are not eligable!", user_id));
+        }
+        
     } else {
         Response::ok(format!(
             "Slack returned an error: {}",
@@ -126,4 +135,31 @@ pub async fn exchange_code_for_token(
     let oauth_response = response.json::<OAuthResponse>().await.unwrap();
 
     Ok(oauth_response)
+}
+
+async fn ysws_api(user_id: &AuthedUser) -> bool {
+    let client = Client::new();
+    let url = "https://verify.hackclub.dev/api/status";
+
+    let json_body: Value = serde_json::json!({
+        "slack_id": user_id.id,
+    });
+
+    // Create headers
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+    // Send the POST request
+    let response = client.post(url)
+        .headers(headers)
+        .json(&json_body)
+        .send()
+        .await
+        .unwrap();
+
+    if response.text().await.unwrap().contains("eligible") {
+        return true;
+    } else {
+        return false;
+    };
 }
