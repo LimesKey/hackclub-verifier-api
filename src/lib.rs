@@ -1,13 +1,13 @@
-use worker::*;
+use reqwest::Client;
 use serde::Deserialize;
 use serde_qs;
-use reqwest::{Client};
+use worker::*;
 
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
     if req.method() == Method::Get {
         let response = handle_oauth(req, env).await;
-        
+
         response
     } else {
         Response::error("Method Not Allowed", 405)
@@ -22,7 +22,7 @@ async fn handle_oauth(req: Request, env: Env) -> Result<Response> {
         Ok(params) => params,
         Err(_) => return Response::error("Invalid query parameters", 400),
     };
-    
+
     // Retrieve environment variables
     let client_id = match env.var("SLACK_CLIENT_ID") {
         Ok(var) => var.to_string(),
@@ -42,7 +42,14 @@ async fn handle_oauth(req: Request, env: Env) -> Result<Response> {
     console_log!("Code: {}", params.code);
 
     // Exchange authorization code for an access token
-    let access_token_response = match exchange_code_for_token(&client_id, &client_secret, &params.code, &redirect_uri).await {
+    let access_token_response = match exchange_code_for_token(
+        &client_id,
+        &client_secret,
+        &params.code,
+        &redirect_uri,
+    )
+    .await
+    {
         Ok(response) => response,
         Err(_) => return Response::error("FailSome(AuthedUser)ed to exchange code for token", 500),
     };
@@ -52,9 +59,13 @@ async fn handle_oauth(req: Request, env: Env) -> Result<Response> {
     if access_token_response.ok {
         user_id = access_token_response.authed_user.id;
         Response::ok(format!("Successfully authenticated as user {}", user_id))
-    }
-    else {
-        Response::ok(format!("Slack returned an error: {}", access_token_response.error.unwrap_or_else(|| "Unknown error".to_string())))
+    } else {
+        Response::ok(format!(
+            "Slack returned an error: {}",
+            access_token_response
+                .error
+                .unwrap_or_else(|| "Unknown error".to_string())
+        ))
     }
 }
 
@@ -94,22 +105,25 @@ pub struct Team {
 }
 
 // Function to exchange authorization code for an access token
-pub async fn exchange_code_for_token(client_id: &str, client_secret: &str, code: &str, redirect_uri: &str) -> Result<OAuthResponse> {
+pub async fn exchange_code_for_token(
+    client_id: &str,
+    client_secret: &str,
+    code: &str,
+    redirect_uri: &str,
+) -> Result<OAuthResponse> {
     let client = Client::new();
 
     // Make the request to the Slack API to exchange the code for an access token
-    let request = client
-        .post("https://slack.com/api/oauth.v2.access")
-        .form(&[
-            ("client_id", client_id),
-            ("client_secret", client_secret),
-            ("code", code),
-            ("redirect_uri", redirect_uri),
-        ]);
+    let request = client.post("https://slack.com/api/oauth.v2.access").form(&[
+        ("client_id", client_id),
+        ("client_secret", client_secret),
+        ("code", code),
+        ("redirect_uri", redirect_uri),
+    ]);
 
     let response = request.send().await.unwrap();
 
     let oauth_response = response.json::<OAuthResponse>().await.unwrap();
-    
+
     Ok(oauth_response)
 }
