@@ -1,8 +1,11 @@
-use reqwest::{header::{HeaderMap, HeaderValue, CONTENT_TYPE}, Client};
+use reqwest::{
+    header::{HeaderMap, HeaderValue, CONTENT_TYPE},
+    Client,
+};
 use serde::Deserialize;
+use serde_json::Value;
 use serde_qs;
 use worker::*;
-use serde_json::Value; 
 
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
@@ -62,12 +65,16 @@ async fn handle_oauth(req: Request, env: Env) -> Result<Response> {
         user_id = access_token_response.authed_user.id;
 
         if ysws_status == true {
-            return Response::ok(format!("Successfully authenticated as user {}, and you are eligable!", user_id));
+            return Response::ok(format!(
+                "Successfully authenticated as user {}, and you are eligable!",
+                user_id
+            ));
+        } else {
+            return Response::ok(format!(
+                "Successfully authenticated as user {}, but you are not eligable!",
+                user_id
+            ));
         }
-        else {
-            return Response::ok(format!("Successfully authenticated as user {}, but you are not eligable!", user_id));
-        }
-
     } else {
         Response::ok(format!(
             "Slack returned an error: {}",
@@ -150,7 +157,8 @@ async fn ysws_api(user_id: &AuthedUser) -> bool {
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
     // Send the POST request
-    let response = client.post(url)
+    let response = client
+        .post(url)
         .headers(headers)
         .json(&json_body)
         .send()
