@@ -55,7 +55,7 @@ async fn handle_oauth(req: Request, env: Env) -> Result<Response> {
     .await
     {
         Ok(response) => response,
-        Err(_) => return Response::error("FailSome(AuthedUser)ed to exchange code for token", 500),
+        Err(_) => return Response::error("Something went wrong", 500),
     };
 
     let mut user_id = String::from("");
