@@ -66,7 +66,7 @@ async fn handle_oauth(req: Request, env: Env) -> Result<Response> {
 
         if ysws_status == true {
             return Response::ok(format!(
-                "Successfully authenticated as user {}, and you are eligable!",
+                "Successfully authenticated as user {}, and you are eligible!",
                 user_id
             ));
         } else {
