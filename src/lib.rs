@@ -16,8 +16,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
         let ysws_status = ysws_api(&user.user).await;
 
         let mut url = Url::parse("https://forms.hackclub.com/t/9yNy4WYtrZus").unwrap();
-        url.query_pairs_mut()
-            .append_pair("slack_id", &user.user.id);
+        url.query_pairs_mut().append_pair("slack_id", &user.user.id);
         url.query_pairs_mut()
             .append_pair("eligibility", &ysws_status.to_string());
         url.query_pairs_mut()
