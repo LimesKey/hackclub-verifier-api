@@ -13,13 +13,15 @@ use worker::*;
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
     if req.method() == Method::Get {
         let user = handle_oauth(req, env).await.unwrap();
-        let ysws_status = ysws_api(&user.authed_user).await;
+        let ysws_status = ysws_api(&user.user).await;
 
         let mut url = Url::parse("https://forms.hackclub.com/t/9yNy4WYtrZus").unwrap();
         url.query_pairs_mut()
-            .append_pair("slack_id", &user.authed_user.id);
+            .append_pair("slack_id", &user.user.id);
         url.query_pairs_mut()
             .append_pair("eligibility", &ysws_status.to_string());
+        url.query_pairs_mut()
+            .append_pair("slack_user", &user.user.name);
 
         Response::redirect(url)
     } else {
@@ -68,32 +70,22 @@ pub struct QueryParams {
     pub state: Option<String>,
 }
 
-// Define a struct for the OAuth response from Slack
-// Define the struct to match the JSON data
 #[derive(Deserialize, Debug)]
 pub struct OAuthResponse {
     pub ok: bool,
-    pub app_id: String,
-    pub authed_user: AuthedUser,
-    pub scope: String,
-    pub token_type: String,
-    pub access_token: String,
-    pub bot_user_id: String,
+    pub user: User,
     pub team: Team,
-    pub is_enterprise_install: bool,
-    pub error: Option<String>,
 }
 
-// Define the struct for the `authed_user` field
 #[derive(Deserialize, Debug)]
-pub struct AuthedUser {
+pub struct User {
+    pub name: String,
     pub id: String,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct Team {
     pub id: String,
-    pub name: String,
 }
 
 pub enum YSWSStatus {
@@ -124,7 +116,7 @@ pub async fn exchange_code_for_token(
     let client = Client::new();
 
     // Make the request to the Slack API to exchange the code for an access token
-    let request = client.post("https://slack.com/api/oauth.v2.access").form(&[
+    let request = client.post("https://slack.com/api/users.identity").form(&[
         ("client_id", client_id),
         ("client_secret", client_secret),
         ("code", code),
@@ -138,7 +130,7 @@ pub async fn exchange_code_for_token(
     Ok(oauth_response)
 }
 
-async fn ysws_api(user_id: &AuthedUser) -> YSWSStatus {
+async fn ysws_api(user_id: &User) -> YSWSStatus {
     let client = Client::new();
     let url = "https://verify.hackclub.dev/api/status";
 
