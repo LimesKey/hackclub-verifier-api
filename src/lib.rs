@@ -16,8 +16,10 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
         let ysws_status = ysws_api(&user.authed_user).await;
 
         let mut url = Url::parse("https://forms.hackclub.com/t/9yNy4WYtrZus").unwrap();
-        url.query_pairs_mut().append_pair("slack_id", &user.authed_user.id);
-        url.query_pairs_mut().append_pair("eligibility", &ysws_status.to_string());
+        url.query_pairs_mut()
+            .append_pair("slack_id", &user.authed_user.id);
+        url.query_pairs_mut()
+            .append_pair("eligibility", &ysws_status.to_string());
 
         Response::redirect(url)
     } else {
@@ -53,12 +55,8 @@ async fn handle_oauth(req: Request, env: Env) -> Result<OAuthResponse> {
     console_log!("Code: {}", params.code);
 
     // Exchange authorization code for an access token
-    let access_token_response=  exchange_code_for_token(
-        &client_id,
-        &client_secret,
-        &params.code,
-        &redirect_uri,
-    ).await;
+    let access_token_response =
+        exchange_code_for_token(&client_id, &client_secret, &params.code, &redirect_uri).await;
 
     return access_token_response;
 }
@@ -115,7 +113,6 @@ impl fmt::Display for YSWSStatus {
         }
     }
 }
-
 
 // Function to exchange authorization code for an access token
 pub async fn exchange_code_for_token(
