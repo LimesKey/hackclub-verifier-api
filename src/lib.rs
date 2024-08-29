@@ -1,3 +1,5 @@
+use std::fmt;
+
 use reqwest::{
     header::{HeaderMap, HeaderValue, CONTENT_TYPE},
     Client,
@@ -10,35 +12,40 @@ use worker::*;
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
     if req.method() == Method::Get {
-        let response = handle_oauth(req, env).await;
+        let user = handle_oauth(req, env).await.unwrap();
+        let ysws_status = ysws_api(&user.authed_user).await;
 
-        response
+        let mut url = Url::parse("https://forms.hackclub.com/t/9yNy4WYtrZus").unwrap();
+        url.query_pairs_mut().append_pair("slack_id", &user.authed_user.id);
+        url.query_pairs_mut().append_pair("eligibility", &ysws_status.to_string());
+
+        Response::redirect(url)
     } else {
         Response::error("Method Not Allowed", 405)
     }
 }
 
 // Handle the OAuth flow after the user has been redirected
-async fn handle_oauth(req: Request, env: Env) -> Result<Response> {
+async fn handle_oauth(req: Request, env: Env) -> Result<OAuthResponse> {
     // Parse the query parameters from the request
     let url = req.url()?;
-    let params: QueryParams = match serde_qs::from_str(url.query().unwrap_or("")) {
+    let params: QueryParams = match serde_qs::from_str(url.query().unwrap()) {
         Ok(params) => params,
-        Err(_) => return Response::error("Invalid query parameters", 400),
+        Err(_) => panic!("Error parsing query parameters"),
     };
 
     // Retrieve environment variables
     let client_id = match env.var("SLACK_CLIENT_ID") {
         Ok(var) => var.to_string(),
-        Err(_) => return Response::error("Client ID not set", 500),
+        Err(_) => panic!("Client ID not set"),
     };
     let client_secret = match env.var("SLACK_CLIENT_SECRET") {
         Ok(var) => var.to_string(),
-        Err(_) => return Response::error("Client secret not set", 500),
+        Err(_) => panic!("Client secret not set"),
     };
     let redirect_uri = match env.var("SLACK_REDIRECT_URI") {
         Ok(var) => var.to_string(),
-        Err(_) => return Response::error("Redirect URI not set", 500),
+        Err(_) => panic!("Redirect URI not set"),
     };
 
     console_log!("Client ID: {}", client_id);
@@ -46,43 +53,14 @@ async fn handle_oauth(req: Request, env: Env) -> Result<Response> {
     console_log!("Code: {}", params.code);
 
     // Exchange authorization code for an access token
-    let access_token_response = match exchange_code_for_token(
+    let access_token_response=  exchange_code_for_token(
         &client_id,
         &client_secret,
         &params.code,
         &redirect_uri,
-    )
-    .await
-    {
-        Ok(response) => response,
-        Err(_) => return Response::error("Something went wrong", 500),
-    };
+    ).await;
 
-    let mut user_id = String::from("");
-    // Process the OAuth response
-    if access_token_response.ok {
-        let ysws_status = ysws_api(&access_token_response.authed_user).await;
-        user_id = access_token_response.authed_user.id;
-
-        if ysws_status == true {
-            return Response::ok(format!(
-                "Successfully authenticated as user {}, and you are eligible!",
-                user_id
-            ));
-        } else {
-            return Response::ok(format!(
-                "Successfully authenticated as user {}, but you are not eligable!",
-                user_id
-            ));
-        }
-    } else {
-        Response::ok(format!(
-            "Slack returned an error: {}",
-            access_token_response
-                .error
-                .unwrap_or_else(|| "Unknown error".to_string())
-        ))
-    }
+    return access_token_response;
 }
 
 // Define a struct to match the query parameters
@@ -120,6 +98,25 @@ pub struct Team {
     pub name: String,
 }
 
+pub enum YSWSStatus {
+    EligibleL1,
+    EligibleL2,
+    Ineligible,
+    Insufficient,
+}
+
+impl fmt::Display for YSWSStatus {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            YSWSStatus::EligibleL1 => write!(f, "Eligible L1"),
+            YSWSStatus::EligibleL2 => write!(f, "Eligible L2"),
+            YSWSStatus::Ineligible => write!(f, "Ineligible"),
+            YSWSStatus::Insufficient => write!(f, "Insufficient"),
+        }
+    }
+}
+
+
 // Function to exchange authorization code for an access token
 pub async fn exchange_code_for_token(
     client_id: &str,
@@ -144,7 +141,7 @@ pub async fn exchange_code_for_token(
     Ok(oauth_response)
 }
 
-async fn ysws_api(user_id: &AuthedUser) -> bool {
+async fn ysws_api(user_id: &AuthedUser) -> YSWSStatus {
     let client = Client::new();
     let url = "https://verify.hackclub.dev/api/status";
 
@@ -165,9 +162,11 @@ async fn ysws_api(user_id: &AuthedUser) -> bool {
         .await
         .unwrap();
 
-    if response.text().await.unwrap().contains("Eligible") {
-        return true;
-    } else {
-        return false;
-    };
+    match response.text().await.unwrap().as_str() {
+        "Eligible L1" => YSWSStatus::EligibleL1,
+        "Eligible L2" => YSWSStatus::EligibleL2,
+        "Ineligible" => YSWSStatus::Ineligible,
+        "Insufficient" => YSWSStatus::Insufficient,
+        _ => YSWSStatus::Ineligible,
+    }
 }
