@@ -15,18 +15,21 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
         console_log!("GET request received");
         let auth = handle_oauth(req, env).await;
 
-        console_log!("Getting user identity with: {}", &auth.authed_user.access_token);
+        console_log!(
+            "Getting user identity with: {}",
+            &auth.authed_user.access_token
+        );
         let username = user_identity(&auth.authed_user.access_token).await;
 
         console_log!("YSWS Status");
         let ysws_status = ysws_api(&auth).await;
 
         let mut url = Url::parse("https://forms.hackclub.com/t/9yNy4WYtrZus").unwrap();
-        url.query_pairs_mut().append_pair("slack_id", &auth.authed_user.id);
+        url.query_pairs_mut()
+            .append_pair("slack_id", &auth.authed_user.id);
         url.query_pairs_mut()
             .append_pair("eligibility", &ysws_status.to_string());
-        url.query_pairs_mut()
-            .append_pair("slack_user", &username);
+        url.query_pairs_mut().append_pair("slack_user", &username);
         console_log!("Redirecting to {}", url);
         Response::redirect_with_status(url, 302)
     } else {
@@ -138,7 +141,6 @@ pub async fn exchange_code_for_token(
     oauth_response
 }
 
-
 async fn ysws_api(user: &OAuthResponse) -> YSWSStatus {
     let client = Client::new();
     let url = "https://verify.hackclub.dev/api/status";
@@ -160,23 +162,23 @@ async fn ysws_api(user: &OAuthResponse) -> YSWSStatus {
         .await
         .unwrap();
 
-        let response_text = response.text().await.unwrap();
+    let response_text = response.text().await.unwrap();
 
-        if response_text.contains("Eligible L1") {
-            YSWSStatus::EligibleL1
-        } else if response_text.contains("Eligible L2") {
-            YSWSStatus::EligibleL2
-        } else if response_text.contains("Ineligible") {
-            YSWSStatus::Ineligible
-        } else if response_text.contains("Insufficient") {
-            YSWSStatus::Insufficient
-        } else if response_text.contains("Sanctioned Country") {
-            YSWSStatus::SanctionedCountry
-        } else if response_text.contains("Testing") {
-            YSWSStatus::Testing
-        } else {
-            YSWSStatus::Unknown
-        }
+    if response_text.contains("Eligible L1") {
+        YSWSStatus::EligibleL1
+    } else if response_text.contains("Eligible L2") {
+        YSWSStatus::EligibleL2
+    } else if response_text.contains("Ineligible") {
+        YSWSStatus::Ineligible
+    } else if response_text.contains("Insufficient") {
+        YSWSStatus::Insufficient
+    } else if response_text.contains("Sanctioned Country") {
+        YSWSStatus::SanctionedCountry
+    } else if response_text.contains("Testing") {
+        YSWSStatus::Testing
+    } else {
+        YSWSStatus::Unknown
+    }
 }
 
 async fn user_identity(access_token: &String) -> String {
@@ -184,7 +186,12 @@ async fn user_identity(access_token: &String) -> String {
     let url = "https://slack.com/api/openid.connect.userInfo";
     console_log!("Getting user info with access token: {}", access_token);
 
-    let response = client.get(url).bearer_auth(access_token).send().await.unwrap();
+    let response = client
+        .get(url)
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .unwrap();
 
     let response_bytes = response.bytes().await.unwrap();
 
@@ -196,7 +203,6 @@ async fn user_identity(access_token: &String) -> String {
 
     user_info.name
 }
-
 
 #[derive(Deserialize, Debug)]
 struct UserInfo {
