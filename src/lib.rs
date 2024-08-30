@@ -1,30 +1,71 @@
-use std::fmt;
-
 use reqwest::{
     header::{HeaderMap, HeaderValue, CONTENT_TYPE},
     Client,
 };
+use std::fmt;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_qs;
 use worker::*;
+use totp_rs::{Algorithm, TOTP, Secret};
+use cfg_if::cfg_if;
+use log::Level; // Add this line to import the Level type
+use wasm_timer::{SystemTime, UNIX_EPOCH};
+
+mod utils;
+
+cfg_if! {
+    if #[cfg(feature = "console_log")] {
+        fn init_log() {
+            console_log::init_with_level(Level::Trace).expect("error initializing log");
+        }
+    } else {
+        fn init_log() {}
+    }
+}
 
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
+    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+    init_log();
+
     if req.method() == Method::Get {
         console_log!("GET request received");
+        
         let auth = handle_oauth(req, env).await;
+        console_log!("Fetched Bot and User Token");
 
         console_log!(
-            "Getting user identity with: {}",
+            "Getting user identity with their user token, : {}",
             &auth.authed_user.access_token
         );
         let username = user_identity(&auth.authed_user.access_token).await;
 
-        console_log!("YSWS Status");
+        console_log!("Getting YSWS status with their Slack ID, {}", &auth.authed_user.id);
         let ysws_status = ysws_api(&auth).await;
 
-        let mut url = Url::parse("https://forms.hackclub.com/t/9yNy4WYtrZus").unwrap();
+        let slack_id = auth.authed_user.id.clone();
+        let slack_username = username.clone();
+        let ysws_status = ysws_status.to_string().clone();
+        
+        let secret = slack_id + &slack_username + &ysws_status;
+
+        let totp = TOTP::new(
+            Algorithm::SHA256,
+            6,
+            1,
+            300,
+            Secret::Raw(secret.as_bytes().to_vec()).to_bytes().expect("Failed to convert secret to bytes"),
+            Some("hackclub-ysws-verifier".to_string()),
+            slack_username.clone(),
+        ).unwrap();
+        
+        let token = totp.generate(wasm_timer::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
+
+        // Redirecting to the form with the slack_id and eligibility status
+
+        let mut url = Url::parse("https://forms.hackclub.com/t/9yNy4WYtrZus").unwrap(); // fillout form URL
+        url.query_pairs_mut().append_pair("secret", &token);
         url.query_pairs_mut()
             .append_pair("slack_id", &auth.authed_user.id);
         url.query_pairs_mut()
@@ -37,7 +78,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
     }
 }
 
-// Handle the OAuth flow after the user has been redirected
+// Handle the OAuth flow to get the access token/ slack id
 async fn handle_oauth(req: Request, env: Env) -> OAuthResponse {
     let url = req.url().unwrap();
     let params: QueryParams = match serde_qs::from_str(url.query().unwrap()) {
@@ -63,13 +104,12 @@ async fn handle_oauth(req: Request, env: Env) -> OAuthResponse {
     console_log!("Code: {}", params.code);
 
     // Exchange authorization code for an access token
-    console_log!("Exchange code for token response");
+    console_log!("Exchange code for token response...");
     let access_token_response =
         exchange_code_for_token(&client_id, &client_secret, &params.code, &redirect_uri).await;
     return access_token_response;
 }
 
-// Define a struct to match the query parameters
 #[derive(Deserialize)]
 pub struct QueryParams {
     pub code: String,
@@ -79,14 +119,14 @@ pub struct QueryParams {
 #[derive(Deserialize, Debug)]
 pub struct OAuthResponse {
     pub ok: bool,
-    pub access_token: String,
+    pub access_token: String, // bot access token
     pub authed_user: User,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct User {
     pub id: String,
-    pub access_token: String,
+    pub access_token: String, // user auth token
 }
 
 pub enum YSWSStatus {
@@ -129,15 +169,7 @@ pub async fn exchange_code_for_token(
     ]);
 
     let response = request.send().await.unwrap();
-
-    // Clone the response bytes so you can log and parse the response
-    let response_bytes = response.bytes().await.unwrap();
-
-    // Log the response as text
-    console_log!("Response: {:?}", String::from_utf8_lossy(&response_bytes));
-
-    // Parse the response as JSON
-    let oauth_response: OAuthResponse = serde_json::from_slice(&response_bytes).unwrap();
+    let oauth_response: OAuthResponse = response.json::<OAuthResponse>().await.unwrap();
     oauth_response
 }
 
@@ -192,14 +224,8 @@ async fn user_identity(access_token: &String) -> String {
         .send()
         .await
         .unwrap();
-
-    let response_bytes = response.bytes().await.unwrap();
-
-    // Log the response as text
-    console_log!("Response: {:?}", String::from_utf8_lossy(&response_bytes));
-
     // Parse the response as JSON
-    let user_info: UserInfo = serde_json::from_slice(&response_bytes).unwrap();
+    let user_info: UserInfo = response.json::<UserInfo>().await.unwrap();
 
     user_info.name
 }
@@ -210,3 +236,31 @@ struct UserInfo {
     name: String,
     email: String,
 }
+
+// fn verify_airtable() {
+
+// } 
+
+// async fn get_airtable_records() -> Vec<Record<OnBoardRecord>> {
+//     let airtable = Airtable::new_from_env();
+//     // Get the current records from a table.
+//     let mut records: Vec<Record<OnBoardRecord>> = airtable
+//         .list_records(
+//             "Submissions",
+//             "Pending",
+//             vec!["OTP"],
+//         )
+//         .await
+//         .unwrap();
+
+//     // Iterate over the records.
+//     for (i, record) in records.clone().iter().enumerate() {
+//         println!("{} - {:?}", i, record);
+//     }
+//     return records;
+// }
+
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// struct OnBoardRecord {
+//     OTP: String,
+// }
