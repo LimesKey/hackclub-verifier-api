@@ -91,6 +91,9 @@ pub enum YSWSStatus {
     EligibleL2,
     Ineligible,
     Insufficient,
+    SanctionedCountry,
+    Testing,
+    Unknown,
 }
 
 impl fmt::Display for YSWSStatus {
@@ -100,6 +103,9 @@ impl fmt::Display for YSWSStatus {
             YSWSStatus::EligibleL2 => write!(f, "Eligible L2"),
             YSWSStatus::Ineligible => write!(f, "Ineligible"),
             YSWSStatus::Insufficient => write!(f, "Insufficient"),
+            YSWSStatus::SanctionedCountry => write!(f, "Sanctioned Country"),
+            YSWSStatus::Testing => write!(f, "Testing"),
+            YSWSStatus::Unknown => write!(f, "Unknown"),
         }
     }
 }
@@ -154,13 +160,23 @@ async fn ysws_api(user: &OAuthResponse) -> YSWSStatus {
         .await
         .unwrap();
 
-    match response.text().await.unwrap().as_str() {
-        "Eligible L1" => YSWSStatus::EligibleL1,
-        "Eligible L2" => YSWSStatus::EligibleL2,
-        "Ineligible" => YSWSStatus::Ineligible,
-        "Insufficient" => YSWSStatus::Insufficient,
-        _ => YSWSStatus::Ineligible,
-    }
+        let response_text = response.text().await.unwrap();
+
+        if response_text.contains("Eligible L1") {
+            YSWSStatus::EligibleL1
+        } else if response_text.contains("Eligible L2") {
+            YSWSStatus::EligibleL2
+        } else if response_text.contains("Ineligible") {
+            YSWSStatus::Ineligible
+        } else if response_text.contains("Insufficient") {
+            YSWSStatus::Insufficient
+        } else if response_text.contains("Sanctioned Country") {
+            YSWSStatus::SanctionedCountry
+        } else if response_text.contains("Testing") {
+            YSWSStatus::Testing
+        } else {
+            YSWSStatus::Unknown
+        }
 }
 
 async fn user_identity(access_token: &String) -> String {
