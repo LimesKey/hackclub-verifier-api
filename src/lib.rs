@@ -1,16 +1,16 @@
+use cfg_if::cfg_if;
+use log::Level; // Add this line to import the Level type
 use reqwest::{
     header::{HeaderMap, HeaderValue, CONTENT_TYPE},
     Client,
 };
-use std::fmt;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_qs;
-use worker::*;
-use totp_rs::{Algorithm, TOTP, Secret};
-use cfg_if::cfg_if;
-use log::Level; // Add this line to import the Level type
+use std::fmt;
+use totp_rs::{Algorithm, Secret, TOTP};
 use wasm_timer::{SystemTime, UNIX_EPOCH};
+use worker::*;
 
 mod utils;
 
@@ -31,7 +31,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
 
     if req.method() == Method::Get {
         console_log!("GET request received");
-        
+
         let auth = handle_oauth(req, env).await;
         console_log!("Fetched Bot and User Token");
 
@@ -41,13 +41,16 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
         );
         let username = user_identity(&auth.authed_user.access_token).await;
 
-        console_log!("Getting YSWS status with their Slack ID, {}", &auth.authed_user.id);
+        console_log!(
+            "Getting YSWS status with their Slack ID, {}",
+            &auth.authed_user.id
+        );
         let ysws_status = ysws_api(&auth).await;
 
         let slack_id = auth.authed_user.id.clone();
         let slack_username = username.clone();
         let ysws_status = ysws_status.to_string().clone();
-        
+
         let secret = slack_id + &slack_username + &ysws_status;
 
         let totp = TOTP::new(
@@ -55,12 +58,20 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
             6,
             1,
             300,
-            Secret::Raw(secret.as_bytes().to_vec()).to_bytes().expect("Failed to convert secret to bytes"),
+            Secret::Raw(secret.as_bytes().to_vec())
+                .to_bytes()
+                .expect("Failed to convert secret to bytes"),
             Some("hackclub-ysws-verifier".to_string()),
             slack_username.clone(),
-        ).unwrap();
-        
-        let token = totp.generate(wasm_timer::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
+        )
+        .unwrap();
+
+        let token = totp.generate(
+            wasm_timer::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        );
 
         // Redirecting to the form with the slack_id and eligibility status
 
@@ -239,7 +250,7 @@ struct UserInfo {
 
 // fn verify_airtable() {
 
-// } 
+// }
 
 // async fn get_airtable_records() -> Vec<Record<OnBoardRecord>> {
 //     let airtable = Airtable::new_from_env();
