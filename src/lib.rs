@@ -9,7 +9,7 @@ use serde_json::Value;
 use serde_qs;
 use std::fmt;
 use totp_rs::{Algorithm, Secret, TOTP};
-use wasm_timer::{SystemTime, UNIX_EPOCH};
+use wasm_timer::UNIX_EPOCH;
 use worker::*;
 
 mod utils;
