@@ -9,9 +9,9 @@ use serde_json::Value;
 use serde_qs;
 use std::fmt;
 use totp_rs::{Algorithm, Secret, TOTP};
+use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_timer::UNIX_EPOCH;
 use worker::*;
-use wasm_bindgen::prelude::wasm_bindgen;
 mod utils;
 
 cfg_if! {
@@ -70,7 +70,8 @@ async fn start_verification(url: Url, env: Env) -> Url {
             .expect("Failed to convert secret to bytes"),
         Some("hackclub-ysws-verifier".to_string()),
         username.clone(),
-    ).unwrap();
+    )
+    .unwrap();
 
     let token = totp.generate(
         wasm_timer::SystemTime::now()
@@ -80,7 +81,8 @@ async fn start_verification(url: Url, env: Env) -> Url {
     );
 
     let mut form_url = Url::parse("https://forms.hackclub.com/t/9yNy4WYtrZus").unwrap();
-    form_url.query_pairs_mut()
+    form_url
+        .query_pairs_mut()
         .append_pair("secret", &token)
         .append_pair("slack_id", &slack_id)
         .append_pair("eligibility", &ysws_status.to_string())
