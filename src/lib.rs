@@ -11,7 +11,7 @@ use std::fmt;
 use totp_rs::{Algorithm, Secret, TOTP};
 use wasm_timer::UNIX_EPOCH;
 use worker::*;
-
+use wasm_bindgen::prelude::wasm_bindgen;
 mod utils;
 
 cfg_if! {
@@ -23,75 +23,74 @@ cfg_if! {
         fn init_log() {}
     }
 }
+const html_file: &str = include_str!("../index.html");
 
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
     init_log();
 
+    let url = req.url().unwrap();
+    let path = url.path();
+
     if req.method() == Method::Get {
-        console_log!("GET request received");
+        if path == "/oauth" {
+            let redirect_url = start_verification(url, env).await;
+            return Response::redirect(redirect_url);
+        } else {
+            let domain = r#"https://slack.com/oauth/v2/authorize?client_id=2210535565.6498112565286&scope=channels:read&user_scope=openid,email,profile&redirect_uri=https://placeholder_url"#;
+            let mut domain = domain.replace("placeholder_url", &url.host().unwrap().to_string());
 
-        let auth = handle_oauth(req, env).await;
-        console_log!("Fetched Bot and User Token");
-
-        console_log!(
-            "Getting user identity with their user token, : {}",
-            &auth.authed_user.access_token
-        );
-        let username = user_identity(&auth.authed_user.access_token).await;
-
-        console_log!(
-            "Getting YSWS status with their Slack ID, {}",
-            &auth.authed_user.id
-        );
-        let ysws_status = ysws_api(&auth).await;
-
-        let slack_id = auth.authed_user.id.clone();
-        let slack_username = username.clone();
-        let ysws_status = ysws_status.to_string().clone();
-
-        let secret = slack_id + &slack_username + &ysws_status;
-
-        let totp = TOTP::new(
-            Algorithm::SHA256,
-            6,
-            1,
-            300,
-            Secret::Raw(secret.as_bytes().to_vec())
-                .to_bytes()
-                .expect("Failed to convert secret to bytes"),
-            Some("hackclub-ysws-verifier".to_string()),
-            slack_username.clone(),
-        )
-        .unwrap();
-
-        let token = totp.generate(
-            wasm_timer::SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        );
-
-        // Redirecting to the form with the slack_id and eligibility status
-
-        let mut url = Url::parse("https://forms.hackclub.com/t/9yNy4WYtrZus").unwrap(); // fillout form URL
-        url.query_pairs_mut().append_pair("secret", &token);
-        url.query_pairs_mut()
-            .append_pair("slack_id", &auth.authed_user.id);
-        url.query_pairs_mut()
-            .append_pair("eligibility", &ysws_status.to_string());
-        url.query_pairs_mut().append_pair("slack_user", &username);
-        console_log!("Redirecting to {}", url);
-        Response::redirect_with_status(url, 302)
-    } else {
-        Response::error("Method Not Allowed", 405)
+            let html_content = html_file.replace("https://placeholder_url", domain);
+            return Response::from_html(html_content);
+        }
     }
+    Response::error("Method Not Allowed", 405)
+}
+
+async fn start_verification(url: Url, env: Env) -> Url {
+    console_log!("GET request received");
+
+    let auth = handle_oauth(url, env).await;
+    console_log!("Fetched Bot and User Token");
+
+    let username = user_identity(&auth.authed_user.access_token).await;
+    let ysws_status = ysws_api(&auth).await;
+
+    let slack_id = auth.authed_user.id.clone();
+    let secret = format!("{}{}{}", slack_id, username, ysws_status);
+
+    let totp = TOTP::new(
+        Algorithm::SHA256,
+        6,
+        1,
+        300,
+        Secret::Raw(secret.as_bytes().to_vec())
+            .to_bytes()
+            .expect("Failed to convert secret to bytes"),
+        Some("hackclub-ysws-verifier".to_string()),
+        username.clone(),
+    ).unwrap();
+
+    let token = totp.generate(
+        wasm_timer::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    );
+
+    let mut form_url = Url::parse("https://forms.hackclub.com/t/9yNy4WYtrZus").unwrap();
+    form_url.query_pairs_mut()
+        .append_pair("secret", &token)
+        .append_pair("slack_id", &slack_id)
+        .append_pair("eligibility", &ysws_status.to_string())
+        .append_pair("slack_user", &username);
+
+    form_url
 }
 
 // Handle the OAuth flow to get the access token/ slack id
-async fn handle_oauth(req: Request, env: Env) -> OAuthResponse {
-    let url = req.url().unwrap();
+async fn handle_oauth(url: Url, env: Env) -> OAuthResponse {
     let params: QueryParams = match serde_qs::from_str(url.query().unwrap()) {
         Ok(params) => params,
         Err(_) => panic!("Error parsing query parameters"),

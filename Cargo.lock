@@ -680,7 +680,9 @@ dependencies = [
  "service-logging",
  "totp-rs",
  "urandom",
+ "wasm-bindgen",
  "wasm-timer",
+ "web-sys",
  "worker",
 ]
 
