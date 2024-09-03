@@ -5,13 +5,13 @@ use reqwest::{
     Client,
 };
 use serde::Deserialize;
+use serde_json::json;
 use serde_json::Value;
 use serde_qs;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::{fmt, hash};
 use totp_rs::{Algorithm, Secret, TOTP};
 use wasm_timer::UNIX_EPOCH;
-use serde_json::json;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use worker::*;
 
 cfg_if! {
@@ -28,7 +28,6 @@ cfg_if! {
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
     init_log();
-
 
     let client_secret = match env.var("SLACK_CLIENT_SECRET") {
         Ok(var) => var.to_string(),
@@ -85,7 +84,8 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
         // Redirecting to the form with the slack_id and eligibility status
 
         let mut url = Url::parse("https://forms.hackclub.com/t/9yNy4WYtrZus").unwrap(); // fillout form URL
-        url.query_pairs_mut().append_pair("secret", &hashed_secret.to_string());
+        url.query_pairs_mut()
+            .append_pair("secret", &hashed_secret.to_string());
         url.query_pairs_mut()
             .append_pair("slack_id", &auth.authed_user.id);
         url.query_pairs_mut()
@@ -282,7 +282,7 @@ async fn get_records(env: &Env) -> Vec<Record> {
 
     let response_values: Vec<Value> = response.json::<Vec<Value>>().await.unwrap();
     let mut records: Vec<Record> = Vec::new();
-        
+
     for value in response_values {
         match serde_json::from_value::<Record>(value.clone()) {
             Ok(record) => {
@@ -323,23 +323,24 @@ async fn verify_otp(records: Vec<Record>, env: Env) {
         let hashed_secret = hasher.finish().to_string();
 
         let client = Client::new();
-        let url: Url = Url::parse("http://hackclub-ysws-api.jasperworkers.workers.dev/update").unwrap();
+        let url: Url =
+            Url::parse("http://hackclub-ysws-api.jasperworkers.workers.dev/update").unwrap();
         let bearer_token = jasper_api; // Replace with your actual Bearer token
 
         if hashed_secret == otp_secret {
-            
             let json_body = json!({
                 "recordId": record.id,
                 "authenticated": "true",
             });
-        
+
             let response = client
                 .post(url)
                 .bearer_auth(bearer_token)
                 .json(&json_body)
                 .send()
-                .await.unwrap();
-        
+                .await
+                .unwrap();
+
             if response.status().is_success() {
                 console_log!("Request successful");
             } else {
@@ -358,7 +359,8 @@ async fn verify_otp(records: Vec<Record>, env: Env) {
                 .bearer_auth(bearer_token)
                 .json(&json_body)
                 .send()
-                .await.unwrap();
+                .await
+                .unwrap();
 
             if response.status().is_success() {
                 console_log!("Request successful");
@@ -368,7 +370,6 @@ async fn verify_otp(records: Vec<Record>, env: Env) {
         }
     }
 }
-
 
 #[derive(Deserialize, Debug)]
 struct Record {
