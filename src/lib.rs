@@ -8,7 +8,7 @@ use std::{
     fmt,
     hash::{DefaultHasher, Hash, Hasher},
 };
-use worker::*; 
+use worker::*;
 mod utils;
 
 fn init_log() {
@@ -20,7 +20,6 @@ fn init() {
     init_log();
     utils::set_global_panic_hook();
 }
-
 
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
@@ -206,7 +205,7 @@ async fn ysws_api(user: &OAuthResponse) -> Result<YSWSStatus> {
         .text()
         .await
         .map_err(|e| format!("Text error: {}", e))?;
-    
+
     if response_text.contains("Eligible L1") {
         Ok(YSWSStatus::EligibleL1)
     } else if response_text.contains("Eligible L2") {
