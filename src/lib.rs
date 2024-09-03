@@ -1,5 +1,3 @@
-use cfg_if::cfg_if;
-use log::Level;
 use reqwest::{
     header::{HeaderMap, HeaderValue, CONTENT_TYPE},
     Client,
@@ -10,22 +8,23 @@ use std::{
     fmt,
     hash::{DefaultHasher, Hash, Hasher},
 };
-use worker::*;
+use worker::*; 
+mod utils;
 
-cfg_if! {
-    if #[cfg(feature = "console_log")] {
-        fn init_log() {
-            console_log::init_with_level(Level::Trace).expect("error initializing log");
-        }
-    } else {
-        fn init_log() {}
-    }
+fn init_log() {
+    console_log::init_with_level(log::Level::Trace).expect("error initializing log");
 }
+
+// Initialize logging and set up the panic hook
+fn init() {
+    init_log();
+    utils::set_global_panic_hook();
+}
+
 
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
-    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-    init_log();
+    init();
 
     let client_secret = env
         .var("SLACK_CLIENT_SECRET")
@@ -207,15 +206,23 @@ async fn ysws_api(user: &OAuthResponse) -> Result<YSWSStatus> {
         .text()
         .await
         .map_err(|e| format!("Text error: {}", e))?;
-    Ok(match response_text.as_str() {
-        "Eligible L1" => YSWSStatus::EligibleL1,
-        "Eligible L2" => YSWSStatus::EligibleL2,
-        "Ineligible" => YSWSStatus::Ineligible,
-        "Insufficient" => YSWSStatus::Insufficient,
-        "Sanctioned Country" => YSWSStatus::SanctionedCountry,
-        "Testing" => YSWSStatus::Testing,
-        _ => YSWSStatus::Unknown,
-    })
+    
+    if response_text.contains("Eligible L1") {
+        Ok(YSWSStatus::EligibleL1)
+    } else if response_text.contains("Eligible L2") {
+        Ok(YSWSStatus::EligibleL2)
+    } else if response_text.contains("Ineligible") {
+        Ok(YSWSStatus::Ineligible)
+    } else if response_text.contains("Insufficient") {
+        Ok(YSWSStatus::Insufficient)
+    } else if response_text.contains("Sanctioned Country") {
+        Ok(YSWSStatus::SanctionedCountry)
+    } else if response_text.contains("Testing") {
+        Ok(YSWSStatus::Testing)
+    } else {
+        console_warn!("Unknown status: {}", response_text);
+        Ok(YSWSStatus::Unknown)
+    }
 }
 
 async fn user_identity(access_token: &str) -> Result<String> {
@@ -326,7 +333,7 @@ async fn verify_hash(records: Vec<Record>, env: Env) {
         let client = Client::new();
         let url: Url =
             Url::parse("http://hackclub-ysws-api.jasperworkers.workers.dev/update").unwrap();
-        let bearer_token = jasper_api; // Replace with your actual Bearer token
+        let bearer_token = jasper_api;
 
         if hashed_secret == otp_secret {
             let json_body = json!({
