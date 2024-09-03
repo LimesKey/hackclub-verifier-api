@@ -6,7 +6,10 @@ use reqwest::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{fmt, hash::{DefaultHasher, Hash, Hasher}};
+use std::{
+    fmt,
+    hash::{DefaultHasher, Hash, Hasher},
+};
 use worker::*;
 
 cfg_if! {
@@ -70,7 +73,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
         console_log!("Records fetched");
 
         if !records.is_empty() {
-           verify_hash(records, env).await
+            verify_hash(records, env).await
         }
 
         Response::redirect_with_status(url, 302)
@@ -179,10 +182,7 @@ async fn exchange_code_for_token(
             .await
             .map_err(|e| format!("Parsing error: {}", e))?)
     } else {
-        Err(format!(
-            "OAuth request failed with status: {}",
-            response.status()
-        ).into())
+        Err(format!("OAuth request failed with status: {}", response.status()).into())
     }
 }
 
