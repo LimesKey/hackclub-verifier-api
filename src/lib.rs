@@ -4,27 +4,16 @@ use reqwest::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{
-    fmt,
-    hash::{DefaultHasher, Hash, Hasher},
-};
+use std::fmt;
+use sha3::{Digest, Sha3_256};
 use worker::*;
+use hex;
 mod utils;
-
-fn init_log() {
-    console_log::init_with_level(log::Level::Trace).expect("error initializing log");
-}
-
-// Initialize logging and set up the panic hook
-fn init() {
-    init_log();
-    utils::set_global_panic_hook();
-}
 
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
-    init();
-
+    utils::set_panic_hook();
+    
     let client_secret = env
         .var("SLACK_CLIENT_SECRET")
         .expect("Client secret not set")
@@ -100,6 +89,7 @@ async fn handle_oauth(url: Url, env: &Env) -> Result<OAuthResponse> {
 
     console_log!("Client ID: {}", client_id);
     console_log!("Code: {}", params.code);
+    console_log!("Redirect URI: {}", redirect_uri);
 
     console_log!("Exchange code for token response...");
     exchange_code_for_token(&client_id, &client_secret, &params.code, &redirect_uri).await
@@ -107,9 +97,11 @@ async fn handle_oauth(url: Url, env: &Env) -> Result<OAuthResponse> {
 
 // Hashing secret using DefaultHasher
 fn hash_secret(secret: &str) -> String {
-    let mut hasher = DefaultHasher::new();
-    secret.hash(&mut hasher);
-    hasher.finish().to_string()
+    let mut hasher = Sha3_256::new();
+    hasher.update(secret);
+
+    let hash = hex::encode(hasher.finalize());
+    hash
 }
 
 #[derive(Deserialize)]
@@ -121,8 +113,16 @@ struct QueryParams {
 #[derive(Deserialize, Debug)]
 struct OAuthResponse {
     ok: bool,
-    access_token: String, // bot access token
+    access_token: Option<String>, // bot access token
     authed_user: User,
+}
+
+#[derive(Deserialize, Debug)]
+struct TempOauthResponse {
+    ok: bool,
+    access_token: Option<String>, // bot access token
+    authed_user: Option<User>,
+    error: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -174,13 +174,25 @@ async fn exchange_code_for_token(
         .await
         .map_err(|e| format!("Request error: {}", e))?;
 
-    if response.status().is_success() {
-        Ok(response
-            .json::<OAuthResponse>()
-            .await
-            .map_err(|e| format!("Parsing error: {}", e))?)
+    let temp_response: TempOauthResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Parsing error: {}", e))?;
+
+    if temp_response.ok {
+        if let Some(authed_user) = temp_response.authed_user {
+            Ok(OAuthResponse {
+                ok: temp_response.ok,
+                access_token: temp_response.access_token,
+                authed_user,
+            })
+        } else {
+            console_log!("Some Error {:?}", temp_response);
+            Err(worker::Error::RustError("Authed user not found".into()))
+        }
     } else {
-        Err(format!("OAuth request failed with status: {}", response.status()).into())
+        console_log!("Error response: {:?}", temp_response);
+        Err(worker::Error::RustError(temp_response.error.unwrap_or_else(|| "Unknown error".to_string())))
     }
 }
 
@@ -325,9 +337,7 @@ async fn verify_hash(records: Vec<Record>, env: Env) {
 
         let secret = slack_id + &slack_username + &eligibility + &client_secret.to_string();
 
-        let mut hasher = DefaultHasher::new();
-        secret.hash(&mut hasher);
-        let hashed_secret = hasher.finish().to_string();
+        let hashed_secret = hash_secret(&secret);
 
         let client = Client::new();
         let url: Url =
