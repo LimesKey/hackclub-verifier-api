@@ -75,6 +75,21 @@ impl std::fmt::Display for YSWSStatus {
     }
 }
 
+fn add_cors_headers(mut response: Response) -> Result<Response> {
+    response
+        .headers_mut()
+        .append("Access-Control-Allow-Origin", "*")?;
+    response.headers_mut().append(
+        "Access-Control-Allow-Methods",
+        "GET, POST, PUT, DELETE, OPTIONS",
+    )?;
+    response.headers_mut().append(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization",
+    )?;
+    Ok(response)
+}
+
 // Fetch Event Handler
 #[event(fetch)]
 pub async fn main(mut req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
@@ -102,10 +117,16 @@ pub async fn main(mut req: Request, env: Env, _ctx: worker::Context) -> Result<R
 
     let jasper_api = env.var("JASPER_API")?.to_string();
 
+    if req.method() == Method::Options {
+        let mut response = Response::empty()?;
+        response = add_cors_headers(response)?;
+        return Ok(response);
+    }
+
     // Match request path to handle routing manually
     match req.path().as_str() {
         "/api" => {
-            if req.method() == Method::Get {
+            if req.method() == Method::Post {
                 let api_request: APIRequest = match req.json().await {
                     Ok(body) => body,
                     Err(_) => return Response::error("Bad Request", 400),
@@ -220,7 +241,8 @@ async fn handle_api_request(
         temp_response.hashed_secret = hash_secret(&combined_secret);
     }
 
-    Response::from_json(&temp_response)
+    let response = Response::from_json(&temp_response).unwrap();
+    Ok(add_cors_headers(response)?)
 }
 
 async fn handle_github_oauth(
