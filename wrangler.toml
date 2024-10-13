@@ -7,4 +7,12 @@ command = "cargo install -q worker-build && worker-build --release"
 
 [vars]
 SLACK_CLIENT_ID = "2210535565.6498112565286"
-SLACK_REDIRECT_URI = "https://verify.limeskey.com"
+SLACK_REDIRECT_URI = "https://api.onboard.limeskey.com"
+GITHUB_REDIRECT_URI = ""
+GITHUB_CLIENT_ID = "Ov23li7FU4IQ7x89NQMn"
+
+[dev]
+port = 8787
+
+[observability]
+enabled = true
