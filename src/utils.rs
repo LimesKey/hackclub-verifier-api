@@ -1,7 +1,5 @@
 use cfg_if::cfg_if;
 
- 
-
 cfg_if! {
 
     // https://github.com/rustwasm/console_error_panic_hook#readme
