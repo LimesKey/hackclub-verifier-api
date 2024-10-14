@@ -70,11 +70,11 @@ pub enum YSWSStatus {
 impl std::fmt::Display for YSWSStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            YSWSStatus::EligibleL1 => write!(f, "Eligible L1"),
-            YSWSStatus::EligibleL2 => write!(f, "Eligible L2"),
+            YSWSStatus::EligibleL1 => write!(f, "EligibleL1"),
+            YSWSStatus::EligibleL2 => write!(f, "EligibleL2"),
             YSWSStatus::Ineligible => write!(f, "Ineligible"),
             YSWSStatus::Insufficient => write!(f, "Insufficient"),
-            YSWSStatus::SanctionedCountry => write!(f, "Sanctioned Country"),
+            YSWSStatus::SanctionedCountry => write!(f, "SanctionedCountry"),
             YSWSStatus::Testing => write!(f, "Testing"),
             YSWSStatus::Unknown => write!(f, "Unknown"),
         }
@@ -237,6 +237,8 @@ async fn process_api_payload(
             "{}{}{}{}",
             slack.slack_id, slack.username, slack.eligibility, slack_oauth.client_secret
         );
+        console_log!("First Secret {}", &combined_secret);
+        
         temp_response.hashed_secret = hash_secret(&combined_secret);
     }
 
@@ -473,10 +475,13 @@ async fn verify_all_records(
             "{}{}{}{}",
             slack_id, slack_username, eligibility, slack_oauth.client_secret
         );
+
         let hashed_secret = hash_secret(&secret);
 
         let client = Client::new();
         let bearer_token = jasper_api;
+
+        console_log!("Second Secret {}", &secret);
 
         let json_body = json!({
             "recordId": record.id,
