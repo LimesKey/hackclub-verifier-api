@@ -102,7 +102,7 @@ fn add_cors_headers(mut response: Response) -> Result<Response> {
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
     utils::set_panic_hook();
     console_log!("Recived request from {}", req.url()?);
-    
+
     let slack_oauth = SlackOauth {
         client_id: env.var("SLACK_CLIENT_ID")?.to_string(),
         client_secret: env.var("SLACK_CLIENT_SECRET")?.to_string(),
@@ -147,7 +147,7 @@ async fn process_api_request(
         .json()
         .await
         .map_err(|e| worker::Error::from(format!("Bad Request: {}", e)))?;
-    
+
     match initiate_record_verification(&jasper_api, &slack_oauth, &github_oauth).await {
         Ok(_) => console_log!("Records verification completed"),
         Err(e) => console_error!("Could not verify records: {}", e),
@@ -507,7 +507,11 @@ async fn verify_all_records(
         if response.status().is_success() {
             console_log!("Record {} verification successful", record.id);
         } else {
-            console_log!("Record {} verification failed with status: {}", record.id, response.status());
+            console_log!(
+                "Record {} verification failed with status: {}",
+                record.id,
+                response.status()
+            );
         }
     }
 }
