@@ -1,4 +1,3 @@
-use hex;
 use reqwest::{
     header::{HeaderMap, HeaderValue, CONTENT_TYPE},
     Client,
@@ -123,7 +122,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
     let airtable_api_key = env.var("JASPER_API")?.to_string();
 
     if req.method() == Method::Options {
-        return Ok(add_cors_headers(Response::empty()?)?);
+        return add_cors_headers(Response::empty()?);
     }
 
     match req.path().as_str() {
@@ -164,7 +163,7 @@ async fn process_api_request(
         Err(e) => console_error!("Could not verify records: {}", e),
     }
     let response = process_api_payload(api_request, slack_oauth, github_oauth).await?;
-    Ok(add_cors_headers(response)?)
+    add_cors_headers(response)
 }
 
 async fn process_verify_records_request(
@@ -266,7 +265,7 @@ async fn process_api_payload(
     }
 
     let response = Response::from_json(&temp_response)?;
-    Ok(add_cors_headers(response)?)
+    add_cors_headers(response)
 }
 
 async fn process_github_oauth(
