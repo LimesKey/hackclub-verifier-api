@@ -20,7 +20,6 @@ const UPDATE_API_URL: &str = "http://hackclub-ysws-api.jasperworkers.workers.dev
 // Structs and Enums
 #[derive(Deserialize, Debug, Serialize)]
 struct SlackApiResponse {
-    hashed_secret: String,
     slack_id: String,
     eligibility: YSWSStatus,
     username: String,
@@ -83,17 +82,10 @@ impl std::fmt::Display for YSWSStatus {
 }
 
 fn add_cors_headers(mut response: Response) -> Result<Response> {
-    response
-        .headers_mut()
-        .append("Access-Control-Allow-Origin", "*")?;
-    response.headers_mut().append(
-        "Access-Control-Allow-Methods",
-        "GET, POST, PUT, DELETE, OPTIONS",
-    )?;
-    response.headers_mut().append(
-        "Access-Control-Allow-Headers",
-        "Content-Type, Authorization",
-    )?;
+    let headers = response.headers_mut();
+    headers.set("Access-Control-Allow-Origin", "*")?;
+    headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")?;
+    headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization")?;
     Ok(response)
 }
 
@@ -101,7 +93,7 @@ fn add_cors_headers(mut response: Response) -> Result<Response> {
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
     utils::set_panic_hook();
-    console_log!("Recived request from {}", req.url()?);
+    console_log!("Received request from {}", req.url()?);
 
     let slack_oauth = SlackOauth {
         client_id: env.var("SLACK_CLIENT_ID")?.to_string(),
@@ -177,12 +169,11 @@ async fn process_root_request(req: Request, slack_oauth: SlackOauth) -> Result<R
     let url = req.url()?;
     let params: QueryParams = serde_qs::from_str(url.query().ok_or("Missing query params")?)
         .map_err(|e: serde_qs::Error| worker::Error::from(format!("Query params error: {}", e)))?;
-    let slack_stuff = process_slack_oauth(params.code, slack_oauth).await?;
+    let slack_stuff = process_slack_oauth(params.code, &slack_oauth).await?;
 
     let mut redirect_url = Url::parse("https://forms.hackclub.com/t/9yNy4WYtrZus")?;
     redirect_url
         .query_pairs_mut()
-        .append_pair("secret", &slack_stuff.hashed_secret)
         .append_pair("slack_id", &slack_stuff.slack_id)
         .append_pair("eligibility", &slack_stuff.eligibility.to_string())
         .append_pair("slack_user", &slack_stuff.username);
@@ -222,7 +213,7 @@ async fn process_api_payload(
     };
 
     if let Some(slack_code) = payload.slack_code {
-        match process_slack_oauth(slack_code, slack_oauth).await {
+        match process_slack_oauth(slack_code, &slack_oauth).await {
             Ok(auth) => temp_response.slack = Some(auth),
             Err(e) => console_log!("Slack OAuth Error: {}", e),
         }
@@ -243,8 +234,8 @@ async fn process_api_payload(
 
     if let (Some(slack), Some(github)) = (&temp_response.slack, &temp_response.github) {
         let combined_secret = format!(
-            "{}{}{}{}",
-            slack.slack_id, slack.username, github.id, github.name
+            "{}{}{}{}{}",
+            slack.slack_id, slack.username, github.id, slack.eligibility, slack_oauth.client_secret
         );
         temp_response.hashed_secret = hash_secret(&combined_secret);
     }
@@ -306,7 +297,7 @@ async fn process_github_oauth(
     Ok(GitHubApiResponse { name, id: username })
 }
 
-async fn process_slack_oauth(code: String, slack_oauth: SlackOauth) -> Result<SlackApiResponse> {
+async fn process_slack_oauth(code: String, slack_oauth: &SlackOauth) -> Result<SlackApiResponse> {
     let auth = exchange_slack_code_for_token(
         &slack_oauth.client_id,
         &slack_oauth.client_secret,
@@ -319,10 +310,6 @@ async fn process_slack_oauth(code: String, slack_oauth: SlackOauth) -> Result<Sl
     let ysws_status = fetch_ysws_status(&auth).await?;
 
     Ok(SlackApiResponse {
-        hashed_secret: hash_secret(&format!(
-            "{}{}{}{}",
-            auth.authed_user.id, username, ysws_status, slack_oauth.client_secret
-        )),
         slack_id: auth.authed_user.id,
         eligibility: ysws_status,
         username,
