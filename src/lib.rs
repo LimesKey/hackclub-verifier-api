@@ -10,6 +10,14 @@ use worker::*;
 mod utils;
 use std::collections::HashMap;
 
+// Constants
+const SLACK_OAUTH_URL: &str = "https://slack.com/api/oauth.v2.access";
+const GITHUB_OAUTH_URL: &str = "https://github.com/login/oauth/access_token";
+const GITHUB_USER_URL: &str = "https://api.github.com/user";
+const YSWS_API_URL: &str = "https://verify.hackclub.dev/api/status";
+const RECORDS_API_URL: &str = "http://hackclub-ysws-api.jasperworkers.workers.dev/submissions";
+const UPDATE_API_URL: &str = "http://hackclub-ysws-api.jasperworkers.workers.dev/update";
+
 // Structs and Enums
 #[derive(Deserialize, Debug, Serialize)]
 struct SlackApiResponse {
@@ -27,8 +35,8 @@ struct GitHubApiResponse {
 
 #[derive(Serialize)]
 struct APIResponse {
-    Slack: Option<SlackApiResponse>,
-    GitHub: Option<GitHubApiResponse>,
+    slack: Option<SlackApiResponse>,
+    github: Option<GitHubApiResponse>,
     hashed_secret: String,
 }
 
@@ -92,19 +100,15 @@ fn add_cors_headers(mut response: Response) -> Result<Response> {
 
 // Fetch Event Handler
 #[event(fetch)]
-pub async fn main(mut req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
-    // Set panic hook for Cloudflare
+pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
     utils::set_panic_hook();
-
     console_log!("Request: {:?}", req);
 
     let slack_oauth = SlackOauth {
         client_id: env.var("SLACK_CLIENT_ID")?.to_string(),
         client_secret: env.var("SLACK_CLIENT_SECRET")?.to_string(),
-        redirect_uri: env.var("SLACK_REDIRECT_URI").unwrap().to_string(),
+        redirect_uri: env.var("SLACK_REDIRECT_URI")?.to_string(),
     };
-
-    console_log!("slackredirecturi: {}", slack_oauth.redirect_uri);
 
     let github_oauth = GithubOauth {
         client_id: env.var("GITHUB_CLIENT_ID")?.to_string(),
@@ -115,60 +119,78 @@ pub async fn main(mut req: Request, env: Env, _ctx: worker::Context) -> Result<R
             .and_then(|url| Url::try_from(url.to_string().as_str()).ok()),
     };
 
-    let jasper_api = env.var("JASPER_API")?.to_string();
+    let airtable_api_key = env.var("JASPER_API")?.to_string();
 
     if req.method() == Method::Options {
-        let mut response = Response::empty()?;
-        response = add_cors_headers(response)?;
-        return Ok(response);
+        return Ok(add_cors_headers(Response::empty()?)?);
     }
 
-    // Match request path to handle routing manually
     match req.path().as_str() {
-        "/api" => {
-            if req.method() == Method::Post {
-                let api_request: APIRequest = match req.json().await {
-                    Ok(body) => body,
-                    Err(_) => return Response::error("Bad Request", 400),
-                };
-                match start_record_verification(&jasper_api, &slack_oauth, &github_oauth).await {
-                    Ok(response) => console_log!("Records verification completed"),
-                    Err(e) => console_error!("Could not verify records: {}", e),
-                }
-                return handle_api_request(api_request, slack_oauth, github_oauth).await;
-            } else {
-                return Response::error("Method Not Allowed", 405);
-            }
-        }
+        "/api" => process_api_request(req, slack_oauth, github_oauth, airtable_api_key).await,
         "/verify_records" => {
-            if req.method() != Method::Put {
-                return Response::error("Method Not Allowed", 405);
-            }
-
-            start_record_verification(&jasper_api, &slack_oauth, &github_oauth).await
+            process_verify_records_request(req, slack_oauth, github_oauth, airtable_api_key).await
         }
-        _ => {
-            if !(req.url().unwrap().to_string().contains("?code")) {
-                return Response::error("Not Found", 404);
-            }
-
-            console_log!("Request recieved at root");
-            let url = req.url().unwrap();
-            let params: QueryParams =
-                serde_qs::from_str(url.query().ok_or("Missing query params")?).unwrap();
-            let slack_stuff = handle_slack_oauth(params.code, slack_oauth).await.unwrap();
-
-            let mut url = Url::parse("https://forms.hackclub.com/t/9yNy4WYtrZus").unwrap();
-            url.query_pairs_mut()
-                .append_pair("secret", &slack_stuff.hashed_secret)
-                .append_pair("slack_id", &slack_stuff.slack_id)
-                .append_pair("eligibility", &slack_stuff.eligibility.to_string())
-                .append_pair("slack_user", &slack_stuff.username);
-
-            console_log!("Redirecting to {}", url);
-            Response::redirect_with_status(url, 302)
-        }
+        _ => process_root_request(req, slack_oauth).await,
     }
+}
+
+async fn process_api_request(
+    mut req: Request,
+    slack_oauth: SlackOauth,
+    github_oauth: GithubOauth,
+    jasper_api: String,
+) -> Result<Response> {
+    if req.method() != Method::Post {
+        return Response::error("Method Not Allowed", 405);
+    }
+
+    let api_request: APIRequest = req
+        .json()
+        .await
+        .map_err(|e| worker::Error::from(format!("Bad Request: {}", e)))?;
+    
+    match initiate_record_verification(&jasper_api, &slack_oauth, &github_oauth).await {
+        Ok(_) => console_log!("Records verification completed"),
+        Err(e) => console_error!("Could not verify records: {}", e),
+    }
+    let response = process_api_payload(api_request, slack_oauth, github_oauth).await?;
+    Ok(add_cors_headers(response)?)
+}
+
+async fn process_verify_records_request(
+    req: Request,
+    slack_oauth: SlackOauth,
+    github_oauth: GithubOauth,
+    jasper_api: String,
+) -> Result<Response> {
+    if req.method() != Method::Put {
+        return Response::error("Method Not Allowed", 405);
+    }
+
+    initiate_record_verification(&jasper_api, &slack_oauth, &github_oauth).await
+}
+
+async fn process_root_request(req: Request, slack_oauth: SlackOauth) -> Result<Response> {
+    if !req.url()?.to_string().contains("?code") {
+        return Response::error("Not Found", 404);
+    }
+
+    console_log!("Request received at root");
+    let url = req.url()?;
+    let params: QueryParams = serde_qs::from_str(url.query().ok_or("Missing query params")?)
+        .map_err(|e: serde_qs::Error| worker::Error::from(format!("Query params error: {}", e)))?;
+    let slack_stuff = process_slack_oauth(params.code, slack_oauth).await?;
+
+    let mut redirect_url = Url::parse("https://forms.hackclub.com/t/9yNy4WYtrZus")?;
+    redirect_url
+        .query_pairs_mut()
+        .append_pair("secret", &slack_stuff.hashed_secret)
+        .append_pair("slack_id", &slack_stuff.slack_id)
+        .append_pair("eligibility", &slack_stuff.eligibility.to_string())
+        .append_pair("slack_user", &slack_stuff.username);
+
+    console_log!("Redirecting to {}", redirect_url);
+    Response::redirect_with_status(redirect_url, 302)
 }
 
 #[derive(Deserialize)]
@@ -177,87 +199,67 @@ struct QueryParams {
     state: Option<String>,
 }
 
-async fn start_record_verification(
+async fn initiate_record_verification(
     jasper_api: &String,
     slack_oauth: &SlackOauth,
     github_oauth: &GithubOauth,
 ) -> Result<Response> {
     console_debug!("Trying to fetch records...");
 
-    let records = match get_records(jasper_api.clone()).await {
-        Ok(records) => records,
-        Err(e) => return Response::error(format!("Error fetching records: {}", e), 500),
-    };
-
-    if !records.is_empty() {
-        console_log!("Fetched {} records.", records.len());
-        verify_all_hash(records, &slack_oauth, &github_oauth, &jasper_api).await;
-        return Response::ok("Records verified");
-    } else {
+    let records = fetch_records(jasper_api.clone()).await?;
+    if records.is_empty() {
         return Response::ok("No records to verify");
     }
+
+    console_log!("Fetched {} records.", records.len());
+    verify_all_records(records, slack_oauth, github_oauth, jasper_api).await;
+    Response::ok("Records verified")
 }
 
-// Handle API Request (Slack and GitHub)
-async fn handle_api_request(
+async fn process_api_payload(
     payload: APIRequest,
     slack_oauth: SlackOauth,
     github_oauth: GithubOauth,
 ) -> Result<Response> {
     let mut temp_response = APIResponse {
-        Slack: None,
-        GitHub: None,
+        slack: None,
+        github: None,
         hashed_secret: String::new(),
     };
 
-    let mut slack_id = String::new();
-    let mut slack_username = String::new();
-    let mut github_id = String::new();
-    let mut github_name = String::new();
-
     if let Some(slack_code) = payload.slack_code {
-        match handle_slack_oauth(slack_code, slack_oauth).await {
-            Ok(auth) => {
-                slack_id = auth.slack_id.clone();
-                slack_username = auth.username.clone();
-                temp_response.Slack = Some(auth);
-            }
-            Err(e) => {
-                console_log!("Slack OAuth Error: {}", e);
-                temp_response.Slack = None;
-            }
+        match process_slack_oauth(slack_code, slack_oauth).await {
+            Ok(auth) => temp_response.slack = Some(auth),
+            Err(e) => console_log!("Slack OAuth Error: {}", e),
         }
     }
 
     if let Some(github_code) = payload.github_code {
-        match handle_github_oauth(
+        match process_github_oauth(
             github_code,
             &github_oauth.client_id,
             &github_oauth.client_secret,
         )
         .await
         {
-            Ok(auth) => {
-                github_id = auth.id.clone();
-                github_name = auth.name.clone();
-                temp_response.GitHub = Some(auth);
-            }
-            Err(e) => {
-                console_log!("GitHub OAuth Error: {}", e);
-            }
+            Ok(auth) => temp_response.github = Some(auth),
+            Err(e) => console_log!("GitHub OAuth Error: {}", e),
         }
     }
 
-    if !slack_id.is_empty() && !github_id.is_empty() {
-        let combined_secret = format!("{}{}{}{}", slack_id, slack_username, github_id, github_name);
+    if let (Some(slack), Some(github)) = (&temp_response.slack, &temp_response.github) {
+        let combined_secret = format!(
+            "{}{}{}{}",
+            slack.slack_id, slack.username, github.id, github.name
+        );
         temp_response.hashed_secret = hash_secret(&combined_secret);
     }
 
-    let response = Response::from_json(&temp_response).unwrap();
+    let response = Response::from_json(&temp_response)?;
     Ok(add_cors_headers(response)?)
 }
 
-async fn handle_github_oauth(
+async fn process_github_oauth(
     code: String,
     client_id: &str,
     client_secret: &str,
@@ -265,11 +267,8 @@ async fn handle_github_oauth(
     console_log!("Starting GitHub OAuth process");
 
     let client = Client::new();
-
-    // Exchange code for access token
-    console_log!("Exchanging code for access token");
     let token_response = client
-        .post("https://github.com/login/oauth/access_token")
+        .post(GITHUB_OAUTH_URL)
         .header(CONTENT_TYPE, "application/json")
         .json(&json!({
             "client_id": client_id,
@@ -278,77 +277,46 @@ async fn handle_github_oauth(
         }))
         .send()
         .await
-        .map_err(|e| {
-            console_log!("Request error during token exchange: {}", e);
-            format!("Request error: {}", e)
-        })?;
+        .map_err(|e| format!("Request error: {}", e))?;
 
-    console_log!("Received token response");
-
-    let token_text = token_response.text().await.map_err(|e| {
-        console_log!("Error reading token response text: {}", e);
-        format!("Error reading token response text: {}", e)
-    })?;
-
-    console_log!("Token response text: {}", token_text);
-
-    // Parse URL-encoded response
+    let token_text = token_response
+        .text()
+        .await
+        .map_err(|e| format!("Error reading token response text: {}", e))?;
     let token_params: HashMap<String, String> = url::form_urlencoded::parse(token_text.as_bytes())
         .into_owned()
         .collect();
+    let access_token = token_params
+        .get("access_token")
+        .ok_or("Missing access token")?;
 
-    console_log!("Parsed token parameters: {:?}", token_params);
-
-    let access_token = token_params.get("access_token").ok_or_else(|| {
-        console_log!("Missing access token in response");
-        "Missing access token".to_string()
-    })?;
-
-    console_log!("Access token received: {}", access_token);
-
-    // Fetch user profile information
-    console_log!("Fetching user profile information");
     let user_response = client
-        .get("https://api.github.com/user")
+        .get(GITHUB_USER_URL)
         .header("Authorization", format!("token {}", access_token))
         .header("User-Agent", "request")
         .send()
         .await
-        .map_err(|e| {
-            console_log!("Request error during user profile fetch: {}", e);
-            format!("Request error: {}", e)
-        })?;
+        .map_err(|e| format!("Request error: {}", e))?;
 
-    console_log!("Received user profile response");
-
-    let user_info: serde_json::Value = user_response.json().await.map_err(|e| {
-        console_log!("Parsing error during user profile response: {}", e);
-        format!("Parsing error: {}", e)
-    })?;
-
-    console_log!("Parsed user profile response: {:?}", user_info);
-
+    let user_info: Value = user_response
+        .json()
+        .await
+        .map_err(|e| format!("Parsing error: {}", e))?;
     let username = user_info["login"]
         .as_str()
-        .ok_or_else(|| {
-            console_log!("Missing username in user profile response");
-            "Missing username".to_string()
-        })?
+        .ok_or("Missing username")?
         .to_string();
-
     let name = user_info["name"]
         .as_str()
         .unwrap_or("Unknown User")
         .to_string();
 
     console_log!("GitHub OAuth process completed successfully");
-
     Ok(GitHubApiResponse { name, id: username })
 }
 
-// OAuth Slack Function
-async fn handle_slack_oauth(code: String, slack_oauth: SlackOauth) -> Result<SlackApiResponse> {
-    let auth = exchange_code_for_token(
+async fn process_slack_oauth(code: String, slack_oauth: SlackOauth) -> Result<SlackApiResponse> {
+    let auth = exchange_slack_code_for_token(
         &slack_oauth.client_id,
         &slack_oauth.client_secret,
         &code,
@@ -356,9 +324,8 @@ async fn handle_slack_oauth(code: String, slack_oauth: SlackOauth) -> Result<Sla
     )
     .await?;
 
-    let username = user_identity(&auth.authed_user.access_token).await?;
-
-    let ysws_status = ysws_api(&auth).await?;
+    let username = fetch_slack_user_identity(&auth.authed_user.access_token).await?;
+    let ysws_status = fetch_ysws_status(&auth).await?;
 
     Ok(SlackApiResponse {
         hashed_secret: hash_secret(&format!(
@@ -371,8 +338,7 @@ async fn handle_slack_oauth(code: String, slack_oauth: SlackOauth) -> Result<Sla
     })
 }
 
-// Fetch OAuth token from Slack
-async fn exchange_code_for_token(
+async fn exchange_slack_code_for_token(
     client_id: &str,
     client_secret: &str,
     code: &str,
@@ -380,7 +346,7 @@ async fn exchange_code_for_token(
 ) -> Result<OAuthResponse> {
     let client = Client::new();
     let response = client
-        .post("https://slack.com/api/oauth.v2.access")
+        .post(SLACK_OAUTH_URL)
         .form(&[
             ("client_id", client_id),
             ("client_secret", client_secret),
@@ -398,16 +364,14 @@ async fn exchange_code_for_token(
     Ok(auth_response)
 }
 
-// YSWS API call
-async fn ysws_api(user: &OAuthResponse) -> Result<YSWSStatus> {
+async fn fetch_ysws_status(user: &OAuthResponse) -> Result<YSWSStatus> {
     let client = Client::new();
-    let url = "https://verify.hackclub.dev/api/status";
     let json_body = json!({ "slack_id": user.authed_user.id });
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
     let response = client
-        .post(url)
+        .post(YSWS_API_URL)
         .headers(headers)
         .json(&json_body)
         .send()
@@ -418,27 +382,20 @@ async fn ysws_api(user: &OAuthResponse) -> Result<YSWSStatus> {
         .text()
         .await
         .map_err(|e| format!("Text error: {}", e))?;
-
     console_log!("Response: {}", response_text);
-    if response_text.contains("Eligible L1") {
-        Ok(YSWSStatus::EligibleL1)
-    } else if response_text.contains("Eligible L2") {
-        Ok(YSWSStatus::EligibleL2)
-    } else if response_text.contains("Ineligible") {
-        Ok(YSWSStatus::Ineligible)
-    } else if response_text.contains("Insufficient") {
-        Ok(YSWSStatus::Insufficient)
-    } else if response_text.contains("Sanctioned Country") {
-        Ok(YSWSStatus::SanctionedCountry)
-    } else if response_text.contains("Testing") {
-        Ok(YSWSStatus::Testing)
-    } else {
-        Ok(YSWSStatus::Unknown)
+
+    match response_text.as_str() {
+        text if text.contains("Eligible L1") => Ok(YSWSStatus::EligibleL1),
+        text if text.contains("Eligible L2") => Ok(YSWSStatus::EligibleL2),
+        text if text.contains("Ineligible") => Ok(YSWSStatus::Ineligible),
+        text if text.contains("Insufficient") => Ok(YSWSStatus::Insufficient),
+        text if text.contains("Sanctioned Country") => Ok(YSWSStatus::SanctionedCountry),
+        text if text.contains("Testing") => Ok(YSWSStatus::Testing),
+        _ => Ok(YSWSStatus::Unknown),
     }
 }
 
-// Fetch user identity from Slack API
-async fn user_identity(access_token: &str) -> Result<String> {
+async fn fetch_slack_user_identity(access_token: &str) -> Result<String> {
     let client = Client::new();
     let url = "https://slack.com/api/openid.connect.userInfo";
 
@@ -456,14 +413,12 @@ async fn user_identity(access_token: &str) -> Result<String> {
     Ok(user_info.name)
 }
 
-// Helper function to hash the secret
 fn hash_secret(secret: &str) -> String {
     let mut hasher = Sha3_256::new();
     hasher.update(secret);
     hex::encode(hasher.finalize())
 }
 
-// Structs and Deserializers
 #[derive(Deserialize, Debug)]
 struct OAuthResponse {
     ok: bool,
@@ -484,18 +439,10 @@ struct UserInfo {
     email: String,
 }
 
-struct Enviornment {
-    slack_client_id: String,
-    slack_client_secret: String,
-    slack_redirect_uri: String,
-}
-
-async fn get_records(jasper_api: String) -> Result<Vec<Record>> {
+async fn fetch_records(jasper_api: String) -> Result<Vec<Record>> {
     let client = Client::new();
-    let url = "http://hackclub-ysws-api.jasperworkers.workers.dev/submissions";
-
     let response = client
-        .get(url)
+        .get(RECORDS_API_URL)
         .bearer_auth(jasper_api)
         .send()
         .await
@@ -505,16 +452,10 @@ async fn get_records(jasper_api: String) -> Result<Vec<Record>> {
         .json()
         .await
         .map_err(|e| format!("Parsing error: {}", e))?;
-    let mut records = Vec::new();
-
-    for value in response_values {
-        match serde_json::from_value::<Record>(value.clone()) {
-            Ok(record) => records.push(record),
-            Err(e) => {
-                console_log!("Skipping invalid record: {}", e);
-            }
-        }
-    }
+    let records: Vec<Record> = response_values
+        .into_iter()
+        .filter_map(|value| serde_json::from_value::<Record>(value).ok())
+        .collect();
 
     Ok(records)
 }
@@ -539,7 +480,7 @@ struct Fields {
     slack_username: String,
 }
 
-async fn verify_all_hash(
+async fn verify_all_records(
     records: Vec<Record>,
     slack_oauth: &SlackOauth,
     github_oauth: &GithubOauth,
@@ -553,56 +494,32 @@ async fn verify_all_hash(
         let slack_id = record.fields.slack_id;
         let slack_username = record.fields.slack_username;
 
-        let secret =
-            slack_id + &slack_username + &eligibility + &slack_oauth.client_secret.to_string();
-
+        let secret = format!(
+            "{}{}{}{}",
+            slack_id, slack_username, eligibility, slack_oauth.client_secret
+        );
         let hashed_secret = hash_secret(&secret);
 
         let client = Client::new();
-        let url: Url =
-            Url::parse("http://hackclub-ysws-api.jasperworkers.workers.dev/update").unwrap();
-        let bearer_token = &jasper_api;
+        let bearer_token = jasper_api;
 
-        if hashed_secret == otp_secret {
-            let json_body = json!({
-                "recordId": record.id,
-                "authenticated": "true",
-            });
+        let json_body = json!({
+            "recordId": record.id,
+            "authenticated": (hashed_secret == otp_secret).to_string(),
+        });
 
-            let response = client
-                .post(url)
-                .bearer_auth(bearer_token)
-                .json(&json_body)
-                .send()
-                .await
-                .unwrap();
+        let response = client
+            .post(UPDATE_API_URL)
+            .bearer_auth(bearer_token)
+            .json(&json_body)
+            .send()
+            .await
+            .unwrap();
 
-            if response.status().is_success() {
-                console_log!("Request successful");
-            } else {
-                console_log!("Request failed with status: {}", response.status());
-            }
+        if response.status().is_success() {
+            console_log!("Request successful");
         } else {
-            console_warn!("OTP mismatch");
-
-            let json_body = json!({
-                "recordId": record.id,
-                "authenticated": "false",
-            });
-
-            let response = client
-                .post(url)
-                .bearer_auth(bearer_token)
-                .json(&json_body)
-                .send()
-                .await
-                .unwrap();
-
-            if response.status().is_success() {
-                console_log!("Request successful");
-            } else {
-                console_log!("Request failed with status: {}", response.status());
-            }
+            console_log!("Request failed with status: {}", response.status());
         }
     }
 }
