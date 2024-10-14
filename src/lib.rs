@@ -9,6 +9,7 @@ use sha3::{Digest, Sha3_256};
 use worker::*;
 mod utils;
 use std::collections::HashMap;
+use chrono::Utc;
 
 // Constants
 const SLACK_OAUTH_URL: &str = "https://slack.com/api/oauth.v2.access";
@@ -102,7 +103,7 @@ fn add_cors_headers(mut response: Response) -> Result<Response> {
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
     utils::set_panic_hook();
-    console_log!("Request: {:?}", req);
+    log_request(&req);
 
     let slack_oauth = SlackOauth {
         client_id: env.var("SLACK_CLIENT_ID")?.to_string(),
@@ -134,6 +135,15 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
     }
 }
 
+fn log_request(req: &Request) {
+    console_log!(
+        "[{}] {} {}",
+        Utc::now().format("%Y-%m-%d %H:%M:%S"),
+        req.method(),
+        req.path()
+    );
+}
+
 async fn process_api_request(
     mut req: Request,
     slack_oauth: SlackOauth,
@@ -148,7 +158,7 @@ async fn process_api_request(
         .json()
         .await
         .map_err(|e| worker::Error::from(format!("Bad Request: {}", e)))?;
-
+    
     match initiate_record_verification(&jasper_api, &slack_oauth, &github_oauth).await {
         Ok(_) => console_log!("Records verification completed"),
         Err(e) => console_error!("Could not verify records: {}", e),
@@ -382,7 +392,7 @@ async fn fetch_ysws_status(user: &OAuthResponse) -> Result<YSWSStatus> {
         .text()
         .await
         .map_err(|e| format!("Text error: {}", e))?;
-    console_log!("Response: {}", response_text);
+    console_log!("YSWS API Response: {}", response_text);
 
     match response_text.as_str() {
         text if text.contains("Eligible L1") => Ok(YSWSStatus::EligibleL1),
@@ -486,7 +496,7 @@ async fn verify_all_records(
     github_oauth: &GithubOauth,
     jasper_api: &String,
 ) {
-    console_log!("Looking into {} records", records.len());
+    console_log!("Verifying {} records", records.len());
 
     for record in records {
         let otp_secret = record.fields.otp;
@@ -517,9 +527,9 @@ async fn verify_all_records(
             .unwrap();
 
         if response.status().is_success() {
-            console_log!("Request successful");
+            console_log!("Record {} verification successful", record.id);
         } else {
-            console_log!("Request failed with status: {}", response.status());
+            console_log!("Record {} verification failed with status: {}", record.id, response.status());
         }
     }
 }
