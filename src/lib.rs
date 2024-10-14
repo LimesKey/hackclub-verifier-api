@@ -131,6 +131,10 @@ pub async fn main(mut req: Request, env: Env, _ctx: worker::Context) -> Result<R
                     Ok(body) => body,
                     Err(_) => return Response::error("Bad Request", 400),
                 };
+                match start_record_verification(&jasper_api, &slack_oauth, &github_oauth).await {
+                    Ok(response) => console_log!("Records verification completed"),
+                    Err(e) => console_error!("Could not verify records: {}", e),
+                }
                 return handle_api_request(api_request, slack_oauth, github_oauth).await;
             } else {
                 return Response::error("Method Not Allowed", 405);
@@ -141,20 +145,7 @@ pub async fn main(mut req: Request, env: Env, _ctx: worker::Context) -> Result<R
                 return Response::error("Method Not Allowed", 405);
             }
 
-            console_debug!("Trying to fetch records...");
-
-            let records = match get_records(&env).await {
-                Ok(records) => records,
-                Err(e) => return Response::error(format!("Error fetching records: {}", e), 500),
-            };
-
-            if !records.is_empty() {
-                console_log!("Fetched {} records.", records.len());
-                verify_all_hash(records, slack_oauth, github_oauth, jasper_api).await;
-                return Response::ok("Records verified");
-            } else {
-                return Response::ok("No records to verify");
-            }
+            start_record_verification(&jasper_api, &slack_oauth, &github_oauth).await
         }
         _ => {
             if !(req.url().unwrap().to_string().contains("?code")) {
@@ -184,6 +175,27 @@ pub async fn main(mut req: Request, env: Env, _ctx: worker::Context) -> Result<R
 struct QueryParams {
     code: String,
     state: Option<String>,
+}
+
+async fn start_record_verification(
+    jasper_api: &String,
+    slack_oauth: &SlackOauth,
+    github_oauth: &GithubOauth,
+) -> Result<Response> {
+    console_debug!("Trying to fetch records...");
+
+    let records = match get_records(jasper_api.clone()).await {
+        Ok(records) => records,
+        Err(e) => return Response::error(format!("Error fetching records: {}", e), 500),
+    };
+
+    if !records.is_empty() {
+        console_log!("Fetched {} records.", records.len());
+        verify_all_hash(records, &slack_oauth, &github_oauth, &jasper_api).await;
+        return Response::ok("Records verified");
+    } else {
+        return Response::ok("No records to verify");
+    }
 }
 
 // Handle API Request (Slack and GitHub)
@@ -478,14 +490,9 @@ struct Enviornment {
     slack_redirect_uri: String,
 }
 
-async fn get_records(env: &Env) -> Result<Vec<Record>> {
+async fn get_records(jasper_api: String) -> Result<Vec<Record>> {
     let client = Client::new();
     let url = "http://hackclub-ysws-api.jasperworkers.workers.dev/submissions";
-
-    let jasper_api = env
-        .var("JASPER_API")
-        .map_err(|_| "Jasper API not set".to_string())?
-        .to_string();
 
     let response = client
         .get(url)
@@ -534,9 +541,9 @@ struct Fields {
 
 async fn verify_all_hash(
     records: Vec<Record>,
-    slack_oauth: SlackOauth,
-    github_oauth: GithubOauth,
-    jasper_api: String,
+    slack_oauth: &SlackOauth,
+    github_oauth: &GithubOauth,
+    jasper_api: &String,
 ) {
     console_log!("Looking into {} records", records.len());
 
