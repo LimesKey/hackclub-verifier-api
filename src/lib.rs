@@ -148,7 +148,7 @@ async fn process_api_request(
         .json()
         .await
         .map_err(|e| worker::Error::from(format!("Bad Request: {}", e)))?;
-    
+
     match initiate_record_verification(&jasper_api, &slack_oauth, &github_oauth).await {
         Ok(_) => console_log!("Records verification completed"),
         Err(e) => console_error!("Could not verify records: {}", e),
