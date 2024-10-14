@@ -8,7 +8,6 @@ use sha3::{Digest, Sha3_256};
 use worker::*;
 mod utils;
 use std::collections::HashMap;
-use chrono::Utc;
 
 // Constants
 const SLACK_OAUTH_URL: &str = "https://slack.com/api/oauth.v2.access";
@@ -102,8 +101,8 @@ fn add_cors_headers(mut response: Response) -> Result<Response> {
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
     utils::set_panic_hook();
-    log_request(&req);
-
+    console_log!("Recived request from {}", req.url()?);
+    
     let slack_oauth = SlackOauth {
         client_id: env.var("SLACK_CLIENT_ID")?.to_string(),
         client_secret: env.var("SLACK_CLIENT_SECRET")?.to_string(),
@@ -132,15 +131,6 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
         }
         _ => process_root_request(req, slack_oauth).await,
     }
-}
-
-fn log_request(req: &Request) {
-    console_log!(
-        "[{}] {} {}",
-        Utc::now().format("%Y-%m-%d %H:%M:%S"),
-        req.method(),
-        req.path()
-    );
 }
 
 async fn process_api_request(
@@ -184,7 +174,6 @@ async fn process_root_request(req: Request, slack_oauth: SlackOauth) -> Result<R
         return Response::error("Not Found", 404);
     }
 
-    console_log!("Request received at root");
     let url = req.url()?;
     let params: QueryParams = serde_qs::from_str(url.query().ok_or("Missing query params")?)
         .map_err(|e: serde_qs::Error| worker::Error::from(format!("Query params error: {}", e)))?;
@@ -198,7 +187,6 @@ async fn process_root_request(req: Request, slack_oauth: SlackOauth) -> Result<R
         .append_pair("eligibility", &slack_stuff.eligibility.to_string())
         .append_pair("slack_user", &slack_stuff.username);
 
-    console_log!("Redirecting to {}", redirect_url);
     Response::redirect_with_status(redirect_url, 302)
 }
 
@@ -213,14 +201,11 @@ async fn initiate_record_verification(
     slack_oauth: &SlackOauth,
     github_oauth: &GithubOauth,
 ) -> Result<Response> {
-    console_debug!("Trying to fetch records...");
-
     let records = fetch_records(jasper_api.clone()).await?;
     if records.is_empty() {
         return Response::ok("No records to verify");
     }
 
-    console_log!("Fetched {} records.", records.len());
     verify_all_records(records, slack_oauth, github_oauth, jasper_api).await;
     Response::ok("Records verified")
 }
@@ -273,8 +258,6 @@ async fn process_github_oauth(
     client_id: &str,
     client_secret: &str,
 ) -> Result<GitHubApiResponse> {
-    console_log!("Starting GitHub OAuth process");
-
     let client = Client::new();
     let token_response = client
         .post(GITHUB_OAUTH_URL)
@@ -320,7 +303,6 @@ async fn process_github_oauth(
         .unwrap_or("Unknown User")
         .to_string();
 
-    console_log!("GitHub OAuth process completed successfully");
     Ok(GitHubApiResponse { name, id: username })
 }
 
@@ -391,7 +373,6 @@ async fn fetch_ysws_status(user: &OAuthResponse) -> Result<YSWSStatus> {
         .text()
         .await
         .map_err(|e| format!("Text error: {}", e))?;
-    console_log!("YSWS API Response: {}", response_text);
 
     match response_text.as_str() {
         text if text.contains("Eligible L1") => Ok(YSWSStatus::EligibleL1),
@@ -495,8 +476,6 @@ async fn verify_all_records(
     github_oauth: &GithubOauth,
     jasper_api: &String,
 ) {
-    console_log!("Verifying {} records", records.len());
-
     for record in records {
         let otp_secret = record.fields.otp;
         let eligibility = record.fields.eligibility;
