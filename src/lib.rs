@@ -84,8 +84,14 @@ impl std::fmt::Display for YSWSStatus {
 fn add_cors_headers(mut response: Response) -> Result<Response> {
     let headers = response.headers_mut();
     headers.set("Access-Control-Allow-Origin", "*")?;
-    headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")?;
-    headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization")?;
+    headers.set(
+        "Access-Control-Allow-Methods",
+        "GET, POST, PUT, DELETE, OPTIONS",
+    )?;
+    headers.set(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization",
+    )?;
     Ok(response)
 }
 
@@ -238,7 +244,7 @@ async fn process_api_payload(
             slack.slack_id, slack.username, slack.eligibility, slack_oauth.client_secret
         );
         console_log!("First Secret {}", &combined_secret);
-        
+
         temp_response.hashed_secret = hash_secret(&combined_secret);
     }
 
