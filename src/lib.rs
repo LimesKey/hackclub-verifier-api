@@ -394,6 +394,8 @@ async fn fetch_slack_user_identity(access_token: &str) -> Result<String> {
         .await
         .map_err(|e| format!("Parsing error: {}", e))?;
 
+    console_log!("User info: {:?}", user_info);
+
     Ok(user_info.name)
 }
 
