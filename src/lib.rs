@@ -243,7 +243,6 @@ async fn process_api_payload(
             "{}{}{}{}",
             slack.slack_id, slack.username, slack.eligibility, slack_oauth.client_secret
         );
-        console_log!("First Secret {}", &combined_secret);
 
         temp_response.hashed_secret = hash_secret(&combined_secret);
     }
@@ -472,14 +471,14 @@ async fn verify_all_records(
     jasper_api: &String,
 ) {
     for record in records {
-        let otp_secret = record.fields.otp;
-        let eligibility = record.fields.eligibility;
-        let slack_id = record.fields.slack_id;
-        let slack_username = record.fields.slack_username;
+        let otp_secret = &record.fields.otp;
+        let eligibility = &record.fields.eligibility;
+        let slack_id = &record.fields.slack_id;
+        let slack_username = &record.fields.slack_username;
 
         let secret = format!(
             "{}{}{}{}",
-            slack_id, slack_username, eligibility, slack_oauth.client_secret
+            &slack_id, &slack_username, &eligibility, &slack_oauth.client_secret
         );
 
         let hashed_secret = hash_secret(&secret);
@@ -487,11 +486,9 @@ async fn verify_all_records(
         let client = Client::new();
         let bearer_token = jasper_api;
 
-        console_log!("Second Secret {}", &secret);
-
         let json_body = json!({
             "recordId": record.id,
-            "authenticated": (hashed_secret == otp_secret).to_string(),
+            "authenticated": (hashed_secret == *otp_secret).to_string(),
         });
 
         let response = client
@@ -503,7 +500,7 @@ async fn verify_all_records(
             .unwrap();
 
         if response.status().is_success() {
-            console_log!("Record {} verification successful", record.id);
+            console_log!("Record num.{} verification successful for {}", record.id, &record.fields.slack_username);
         } else {
             console_log!(
                 "Record {} verification failed with status: {}",
