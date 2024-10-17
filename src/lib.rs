@@ -502,7 +502,11 @@ async fn verify_all_records(
             .unwrap();
 
         if response.status().is_success() {
-            console_log!("Record num.{} verification successful for {}", record.id, &record.fields.slack_username);
+            console_log!(
+                "Record num.{} verification successful for {}",
+                record.id,
+                &record.fields.slack_username
+            );
         } else {
             console_log!(
                 "Record {} verification failed with status: {}",
