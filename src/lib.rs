@@ -238,7 +238,10 @@ async fn process_api_payload(
     if let (Some(slack), Some(github)) = (&temp_response.slack, &temp_response.github) {
         let combined_secret = format!(
             "{}{}{}{}",
-            slack.slack_id, slack.username, slack.eligibility, slack_oauth.client_secret // add in github later
+            slack.slack_id,
+            slack.username,
+            slack.eligibility,
+            slack_oauth.client_secret // add in github later
         );
 
         temp_response.hashed_secret = hash_secret(&combined_secret);
