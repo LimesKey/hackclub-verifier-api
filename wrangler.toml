@@ -7,8 +7,8 @@ command = "cargo install -q worker-build && worker-build --release"
 
 [vars]
 SLACK_CLIENT_ID = "2210535565.6498112565286"
-SLACK_REDIRECT_URI = "https://verify.onboard.hackclub.com/oauth/slack"
-GITHUB_REDIRECT_URI = "https://verify.onboard.hackclub.com/oauth/github"
+SLACK_REDIRECT_URI = "https://verify.onboard.hackclub.com/auth/callback/slack"
+GITHUB_REDIRECT_URI = "https://verify.onboard.hackclub.com/auth/callback/github"
 GITHUB_CLIENT_ID = "Ov23li7FU4IQ7x89NQMn"
 
 [dev]

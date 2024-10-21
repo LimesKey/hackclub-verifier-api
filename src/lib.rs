@@ -123,11 +123,10 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
     }
 
     match req.path().as_str() {
-        "/api" => process_api_request(req, slack_oauth, github_oauth, airtable_api_key).await,
         "/verify_records" => {
             process_verify_records_request(req, slack_oauth, github_oauth, airtable_api_key).await
         }
-        _ => process_root_request(req, slack_oauth).await,
+        _ => process_api_request(req, slack_oauth, github_oauth, airtable_api_key).await,
     }
 }
 
@@ -165,26 +164,6 @@ async fn process_verify_records_request(
     }
 
     initiate_record_verification(&jasper_api, &slack_oauth, &github_oauth).await
-}
-
-async fn process_root_request(req: Request, slack_oauth: SlackOauth) -> Result<Response> {
-    if !req.url()?.to_string().contains("?code") {
-        return Response::error("Not Found", 404);
-    }
-
-    let url = req.url()?;
-    let params: QueryParams = serde_qs::from_str(url.query().ok_or("Missing query params")?)
-        .map_err(|e: serde_qs::Error| worker::Error::from(format!("Query params error: {}", e)))?;
-    let slack_stuff = process_slack_oauth(params.code, &slack_oauth).await?;
-
-    let mut redirect_url = Url::parse("https://forms.hackclub.com/t/9yNy4WYtrZus")?;
-    redirect_url
-        .query_pairs_mut()
-        .append_pair("slack_id", &slack_stuff.slack_id)
-        .append_pair("eligibility", &slack_stuff.eligibility.to_string())
-        .append_pair("slack_user", &slack_stuff.username);
-
-    Response::redirect_with_status(redirect_url, 302)
 }
 
 #[derive(Deserialize)]
