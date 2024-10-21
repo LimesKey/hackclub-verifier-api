@@ -217,10 +217,28 @@ async fn process_api_payload(
         }
     }
 
-    if let (Some(slack), Some(github)) = (&temp_response.slack, &temp_response.github) {
+    if let Some(slack) = &temp_response.slack {
         let combined_secret = format!(
             "{}{}{}{}",
             slack.slack_id, slack.username, slack.eligibility, slack_oauth.client_secret
+        );
+
+        temp_response.hashed_secret = hash_secret(&combined_secret);
+    }
+
+    // if let Some(github) = &temp_response.github {
+    //     let combined_secret = format!(
+    //         "{}{}{}",
+    //         github.id, github.name, github_oauth.client_secret
+    //     );
+
+    //     temp_response.hashed_secret = hash_secret(&combined_secret);
+    // }
+
+    if let (Some(slack), Some(github)) = (&temp_response.slack, &temp_response.github) {
+        let combined_secret = format!(
+            "{}{}{}{}",
+            slack.slack_id, slack.username, slack.eligibility, slack_oauth.client_secret // add in github later
         );
 
         temp_response.hashed_secret = hash_secret(&combined_secret);
