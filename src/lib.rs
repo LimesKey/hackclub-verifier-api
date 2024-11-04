@@ -1,7 +1,6 @@
 pub mod airtable;
 pub mod utils;
 
-use crate::airtable::*;
 use reqwest::{
     header::{HeaderMap, HeaderValue, CONTENT_TYPE},
     Client,
@@ -9,8 +8,9 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha3::{Digest, Sha3_256};
-use std::collections::HashMap;
 use worker::*;
+use std::collections::HashMap;
+use crate::airtable::*;
 
 // Constants
 const SLACK_OAUTH_URL: &str = "https://slack.com/api/oauth.v2.access";
@@ -133,8 +133,8 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
     match req.path().as_str() {
         "/verify_records" => {
             process_verify_records_request(req, slack_oauth, airtable_api_key).await
-        }
-        "/verify_hash" => process_hash_verification(req, &slack_oauth).await,
+        },
+        "/verify_hash" => {process_hash_verification(req, &slack_oauth).await},
         _ => process_api_request(req, slack_oauth, github_oauth, &airtable_api_key).await,
     }
 }
@@ -143,7 +143,7 @@ async fn process_api_request(
     mut req: Request,
     slack_oauth: SlackOauth,
     github_oauth: GithubOauth,
-    airtable_key: &String,
+    airtable_key: &String
 ) -> Result<Response> {
     if req.method() != Method::Post {
         return Response::error("Method Not Allowed", 405);
@@ -158,7 +158,7 @@ async fn process_api_request(
         Ok(_) => console_log!("Records verification completed"),
         Err(e) => console_error!("Could not verify records: {}", e),
     }
-
+    
     let response = process_api_payload(api_request, slack_oauth, github_oauth).await?;
     add_cors_headers(response)
 }
@@ -182,9 +182,7 @@ async fn process_hash_verification(mut req: Request, slack_oauth: &SlackOauth) -
 
     let api_request: APIResponse = match req.json().await {
         Ok(data) => data,
-        Err(e) => {
-            return Response::error(format!("Invalid or missing JSON information: {}", e), 400)
-        }
+        Err(e) => return Response::error(format!("Invalid or missing JSON information: {}", e), 400),
     };
 
     let slack = api_request.slack.unwrap();
@@ -232,9 +230,9 @@ async fn process_api_payload(
     };
 
     if let Some(slack_code) = payload.slack_code {
+
         if payload.special_secret == Some("hello".to_string()) {
-            slack_oauth.redirect_uri =
-                String::from("https://trickortrace.hackclub.com/oauth/slack");
+            slack_oauth.redirect_uri = String::from("https://trickortrace.hackclub.com/oauth/slack");
             console_log!("Special secret detected. Redirect URI changed to localhost");
         }
 
@@ -269,11 +267,7 @@ async fn process_api_payload(
     if let (Some(slack), Some(github)) = (&temp_response.slack, &temp_response.github) {
         let combined_secret = format!(
             "{}{}{}{}{}",
-            slack.slack_id,
-            slack.username,
-            slack.eligibility,
-            github.id,
-            slack_oauth.client_secret // add in github later
+            slack.slack_id, slack.username, slack.eligibility, github.id, slack_oauth.client_secret // add in github later
         );
 
         temp_response.hashed_secret = hash_secret(&combined_secret);
@@ -457,7 +451,11 @@ struct UserInfo {
     email: String,
 }
 
-async fn verify_all_records(records: Vec<Record>, slack_oauth: &SlackOauth, airtable_key: &String) {
+async fn verify_all_records(
+    records: Vec<Record>,
+    slack_oauth: &SlackOauth,
+    airtable_key: &String,
+) {
     for record in records {
         let otp_secret = &record.fields.otp;
         let eligibility = &record.fields.eligibility;
@@ -479,11 +477,13 @@ async fn verify_all_records(records: Vec<Record>, slack_oauth: &SlackOauth, airt
                 Ok(_) => console_log!("Record updated to [Verified] successfully"),
                 Err(e) => console_error!("Failed to update record: {}", e),
             }
-        } else {
+        }
+        else {
             match update_submission(airtable_key, record_id, false).await {
                 Ok(_) => console_log!("Record updated to [Unverified] successfully"),
                 Err(e) => console_error!("Failed to update record: {}", e),
             }
         }
+
     }
 }
