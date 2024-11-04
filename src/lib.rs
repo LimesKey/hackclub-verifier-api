@@ -1,3 +1,6 @@
+pub mod airtable;
+pub mod utils;
+
 use reqwest::{
     header::{HeaderMap, HeaderValue, CONTENT_TYPE},
     Client,
@@ -6,16 +9,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha3::{Digest, Sha3_256};
 use worker::*;
-mod utils;
 use std::collections::HashMap;
+use crate::airtable::*;
 
 // Constants
 const SLACK_OAUTH_URL: &str = "https://slack.com/api/oauth.v2.access";
 const GITHUB_OAUTH_URL: &str = "https://github.com/login/oauth/access_token";
 const GITHUB_USER_URL: &str = "https://api.github.com/user";
 const YSWS_API_URL: &str = "https://verify.hackclub.dev/api/status";
-const RECORDS_API_URL: &str = "http://hackclub-ysws-api.jasperworkers.workers.dev/submissions";
-const UPDATE_API_URL: &str = "http://hackclub-ysws-api.jasperworkers.workers.dev/update";
 
 // Structs and Enums
 #[derive(Deserialize, Debug, Serialize)]
@@ -31,7 +32,7 @@ struct GitHubApiResponse {
     id: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct APIResponse {
     slack: Option<SlackApiResponse>,
     github: Option<GitHubApiResponse>,
@@ -42,6 +43,7 @@ struct APIResponse {
 struct APIRequest {
     slack_code: Option<String>,
     github_code: Option<String>,
+    special_secret: Option<String>,
 }
 
 struct SlackOauth {
@@ -65,6 +67,12 @@ pub enum YSWSStatus {
     SanctionedCountry,
     Testing,
     Unknown,
+}
+
+#[derive(Deserialize)]
+struct QueryParams {
+    code: String,
+    state: Option<String>,
 }
 
 impl std::fmt::Display for YSWSStatus {
@@ -116,7 +124,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
             .and_then(|url| Url::try_from(url.to_string().as_str()).ok()),
     };
 
-    let airtable_api_key = env.var("JASPER_API")?.to_string();
+    let airtable_api_key = env.var("AIRTABLE_KEY")?.to_string();
 
     if req.method() == Method::Options {
         return add_cors_headers(Response::empty()?);
@@ -124,9 +132,10 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
 
     match req.path().as_str() {
         "/verify_records" => {
-            process_verify_records_request(req, slack_oauth, github_oauth, airtable_api_key).await
-        }
-        _ => process_api_request(req, slack_oauth, github_oauth, airtable_api_key).await,
+            process_verify_records_request(req, slack_oauth, airtable_api_key).await
+        },
+        "/verify_hash" => {process_hash_verification(req, &slack_oauth).await},
+        _ => process_api_request(req, slack_oauth, github_oauth, &airtable_api_key).await,
     }
 }
 
@@ -134,7 +143,7 @@ async fn process_api_request(
     mut req: Request,
     slack_oauth: SlackOauth,
     github_oauth: GithubOauth,
-    jasper_api: String,
+    airtable_key: &String
 ) -> Result<Response> {
     if req.method() != Method::Post {
         return Response::error("Method Not Allowed", 405);
@@ -145,10 +154,11 @@ async fn process_api_request(
         .await
         .map_err(|e| worker::Error::from(format!("Bad Request: {}", e)))?;
 
-    match initiate_record_verification(&jasper_api, &slack_oauth, &github_oauth).await {
+    match initiate_record_verification(airtable_key, &slack_oauth).await {
         Ok(_) => console_log!("Records verification completed"),
         Err(e) => console_error!("Could not verify records: {}", e),
     }
+    
     let response = process_api_payload(api_request, slack_oauth, github_oauth).await?;
     add_cors_headers(response)
 }
@@ -156,39 +166,61 @@ async fn process_api_request(
 async fn process_verify_records_request(
     req: Request,
     slack_oauth: SlackOauth,
-    github_oauth: GithubOauth,
     jasper_api: String,
 ) -> Result<Response> {
     if req.method() != Method::Put {
         return Response::error("Method Not Allowed", 405);
     }
 
-    initiate_record_verification(&jasper_api, &slack_oauth, &github_oauth).await
+    initiate_record_verification(&jasper_api, &slack_oauth).await
 }
 
-#[derive(Deserialize)]
-struct QueryParams {
-    code: String,
-    state: Option<String>,
+async fn process_hash_verification(mut req: Request, slack_oauth: &SlackOauth) -> Result<Response> {
+    if req.method() != Method::Get {
+        return Response::error("Method Not Allowed", 405);
+    }
+
+    let api_request: APIResponse = match req.json().await {
+        Ok(data) => data,
+        Err(e) => return Response::error(format!("Invalid or missing JSON information: {}", e), 400),
+    };
+
+    let slack = api_request.slack.unwrap();
+
+    let eligibility = &slack.eligibility;
+    let slack_id = &slack.slack_id;
+    let slack_username = &slack.username;
+    let github_username = &api_request.github.unwrap().id;
+
+    let secret = format!(
+        "{}{}{}{}{}",
+        &slack_id, &slack_username, &eligibility, &github_username, &slack_oauth.client_secret
+    );
+
+    let hashed_secret = hash_secret(&secret);
+
+    match hashed_secret == api_request.hashed_secret {
+        true => Response::ok("Hash Verified"),
+        false => Response::error("Hash Unverified", 400),
+    }
 }
 
 async fn initiate_record_verification(
-    jasper_api: &String,
+    airtable_key: &String,
     slack_oauth: &SlackOauth,
-    github_oauth: &GithubOauth,
 ) -> Result<Response> {
-    let records = fetch_records(jasper_api.clone()).await?;
+    let records = fetch_submissions(airtable_key).await.unwrap();
     if records.is_empty() {
         return Response::ok("No records to verify");
     }
 
-    verify_all_records(records, slack_oauth, github_oauth, jasper_api).await;
+    verify_all_records(records, slack_oauth, airtable_key).await;
     Response::ok("Records verified")
 }
 
 async fn process_api_payload(
     payload: APIRequest,
-    slack_oauth: SlackOauth,
+    mut slack_oauth: SlackOauth,
     github_oauth: GithubOauth,
 ) -> Result<Response> {
     let mut temp_response = APIResponse {
@@ -198,6 +230,12 @@ async fn process_api_payload(
     };
 
     if let Some(slack_code) = payload.slack_code {
+
+        if payload.special_secret == Some("hello".to_string()) {
+            slack_oauth.redirect_uri = String::from("https://trickortrace.hackclub.com/oauth/slack");
+            console_log!("Special secret detected. Redirect URI changed to localhost");
+        }
+
         match process_slack_oauth(slack_code, &slack_oauth).await {
             Ok(auth) => temp_response.slack = Some(auth),
             Err(e) => console_log!("Slack OAuth Error: {}", e),
@@ -226,19 +264,10 @@ async fn process_api_payload(
         temp_response.hashed_secret = hash_secret(&combined_secret);
     }
 
-    // if let Some(github) = &temp_response.github {
-    //     let combined_secret = format!(
-    //         "{}{}{}",
-    //         github.id, github.name, github_oauth.client_secret
-    //     );
-
-    //     temp_response.hashed_secret = hash_secret(&combined_secret);
-    // }
-
     if let (Some(slack), Some(github)) = (&temp_response.slack, &temp_response.github) {
         let combined_secret = format!(
-            "{}{}{}{}",
-            slack.slack_id, slack.username, slack.eligibility, slack_oauth.client_secret // add in github later
+            "{}{}{}{}{}",
+            slack.slack_id, slack.username, slack.eligibility, github.id, slack_oauth.client_secret // add in github later
         );
 
         temp_response.hashed_secret = hash_secret(&combined_secret);
@@ -422,94 +451,39 @@ struct UserInfo {
     email: String,
 }
 
-async fn fetch_records(jasper_api: String) -> Result<Vec<Record>> {
-    let client = Client::new();
-    let response = client
-        .get(RECORDS_API_URL)
-        .bearer_auth(jasper_api)
-        .send()
-        .await
-        .map_err(|e| format!("Request error: {}", e))?;
-
-    let response_values: Vec<Value> = response
-        .json()
-        .await
-        .map_err(|e| format!("Parsing error: {}", e))?;
-    let records: Vec<Record> = response_values
-        .into_iter()
-        .filter_map(|value| serde_json::from_value::<Record>(value).ok())
-        .collect();
-
-    Ok(records)
-}
-
-#[derive(Deserialize, Debug)]
-struct Record {
-    id: String,
-    #[serde(rename = "createdTime")]
-    created_time: String,
-    fields: Fields,
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "PascalCase")]
-struct Fields {
-    eligibility: String,
-    #[serde(rename = "OTP")]
-    otp: String,
-    #[serde(rename = "Slack ID")]
-    slack_id: String,
-    #[serde(rename = "SlackUsername")]
-    slack_username: String,
-}
-
 async fn verify_all_records(
     records: Vec<Record>,
     slack_oauth: &SlackOauth,
-    github_oauth: &GithubOauth,
-    jasper_api: &String,
+    airtable_key: &String,
 ) {
     for record in records {
         let otp_secret = &record.fields.otp;
         let eligibility = &record.fields.eligibility;
         let slack_id = &record.fields.slack_id;
         let slack_username = &record.fields.slack_username;
+        let github_username = &record.fields.github_handle;
+
+        let record_id = &record.id;
 
         let secret = format!(
-            "{}{}{}{}",
-            &slack_id, &slack_username, &eligibility, &slack_oauth.client_secret
+            "{}{}{}{}{}",
+            &slack_id, &slack_username, &eligibility, &github_username, &slack_oauth.client_secret
         );
 
         let hashed_secret = hash_secret(&secret);
 
-        let client = Client::new();
-        let bearer_token = jasper_api;
-
-        let json_body = json!({
-            "recordId": record.id,
-            "authenticated": (hashed_secret == *otp_secret).to_string(),
-        });
-
-        let response = client
-            .post(UPDATE_API_URL)
-            .bearer_auth(bearer_token)
-            .json(&json_body)
-            .send()
-            .await
-            .unwrap();
-
-        if response.status().is_success() {
-            console_log!(
-                "Record num.{} verification successful for {}",
-                record.id,
-                &record.fields.slack_username
-            );
-        } else {
-            console_log!(
-                "Record {} verification failed with status: {}",
-                record.id,
-                response.status()
-            );
+        if *otp_secret == hashed_secret {
+            match update_submission(airtable_key, record_id, true).await {
+                Ok(_) => console_log!("Record updated to [Verified] successfully"),
+                Err(e) => console_error!("Failed to update record: {}", e),
+            }
         }
+        else {
+            match update_submission(airtable_key, record_id, false).await {
+                Ok(_) => console_log!("Record updated to [Unverified] successfully"),
+                Err(e) => console_error!("Failed to update record: {}", e),
+            }
+        }
+
     }
 }
