@@ -1,7 +1,7 @@
+use reqwest::header::{HeaderValue, AUTHORIZATION};
 use reqwest::Client;
 use serde_json::json;
 use std::error::Error;
-use reqwest::header::{HeaderValue, AUTHORIZATION};
 
 const AIRTABLE_BASE_ID: &str = "app4Bs8Tjwvk5qcD4";
 const SUBMISSIONS_TABLE_NAME: &str = "Submissions";
