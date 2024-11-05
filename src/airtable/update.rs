@@ -1,6 +1,7 @@
 use reqwest::Client;
 use serde_json::json;
 use std::error::Error;
+use reqwest::header::{HeaderValue, AUTHORIZATION};
 
 const AIRTABLE_BASE_ID: &str = "app4Bs8Tjwvk5qcD4";
 const SUBMISSIONS_TABLE_NAME: &str = "Submissions";
@@ -29,10 +30,14 @@ async fn handle_update_request(
         AIRTABLE_BASE_ID, SUBMISSIONS_TABLE_NAME, record_id
     );
 
+    let auth_header_value = format!("Bearer {}", airtable_key.trim());
+    let auth_header = HeaderValue::from_str(&auth_header_value)
+        .map_err(|e| format!("Invalid header value: {}", e))?;
+
     let client = Client::new();
     let response = client
         .patch(&update_url)
-        .header("Authorization", format!("Bearer {}", airtable_key))
+        .header(AUTHORIZATION, auth_header)
         .header("Content-Type", "application/json")
         .json(&json!({ "fields": fields }))
         .send()

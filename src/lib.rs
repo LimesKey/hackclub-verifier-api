@@ -107,7 +107,8 @@ fn add_cors_headers(mut response: Response) -> Result<Response> {
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
     utils::set_panic_hook();
-    console_log!("Received request from {}", req.url()?);
+
+    request_diagnostics(&req);
 
     let slack_oauth = SlackOauth {
         client_id: env.var("SLACK_CLIENT_ID")?.to_string(),
@@ -160,6 +161,7 @@ async fn process_api_request(
     }
 
     let response = process_api_payload(api_request, slack_oauth, github_oauth).await?;
+    console_log!("API request processed successfully");
     add_cors_headers(response)
 }
 
@@ -485,5 +487,29 @@ async fn verify_all_records(records: Vec<Record>, slack_oauth: &SlackOauth, airt
                 Err(e) => console_error!("Failed to update record: {}", e),
             }
         }
+    }
+}
+
+fn request_diagnostics(req: &Request) {
+    if let Ok(Some(ip)) = req.headers().get("cf-connecting-ip") {
+        console_log!("Received request from {} at {:?}", req.url().unwrap(), ip);
+    } else {
+        console_log!("Received request at {:?}", req.url().unwrap());
+    }
+
+    let city = req.headers().get("cf-ipcity").ok().flatten();
+    let country = req.headers().get("cf-ipcountry").ok().flatten();
+
+    match (city, country) {
+        (Some(city), Some(country)) => {
+            console_log!("City: {:?}, Country: {:?}", city, country);
+        }
+        (Some(city), None) => {
+            console_log!("City: {:?}", city);
+        }
+        (None, Some(country)) => {
+            console_log!("Country: {:?}", country);
+        }
+        (None, None) => {}
     }
 }
