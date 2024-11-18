@@ -1,7 +1,5 @@
-
-
-use serde::{Deserialize, Serialize};
 use crate::Url;
+use serde::{Deserialize, Serialize};
 
 pub struct GithubOauth {
     pub client_id: String,

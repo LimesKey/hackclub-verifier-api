@@ -1,12 +1,15 @@
 use crate::slack::types::*;
-use crate::{console_log, HeaderValue, HeaderMap, CONTENT_TYPE};
-use serde_json::json;
+use crate::{console_log, HeaderMap, HeaderValue, CONTENT_TYPE};
 use reqwest::Client;
+use serde_json::json;
 
 const SLACK_OAUTH_URL: &str = "https://slack.com/api/oauth.v2.access";
 const YSWS_API_URL: &str = "https://verify.hackclub.dev/api/status";
 
-pub async fn process_slack_oauth(code: String, slack_oauth: &SlackOauth) -> Result<SlackApiResponse, Box<dyn std::error::Error>> {
+pub async fn process_slack_oauth(
+    code: String,
+    slack_oauth: &SlackOauth,
+) -> Result<SlackApiResponse, Box<dyn std::error::Error>> {
     let auth = exchange_slack_code_for_token(
         &slack_oauth.client_id,
         &slack_oauth.client_secret,
@@ -15,8 +18,9 @@ pub async fn process_slack_oauth(code: String, slack_oauth: &SlackOauth) -> Resu
     )
     .await?;
 
-    let (firstname, lastname, username) = fetch_slack_user_identity(&auth.authed_user.access_token).await?;    
-    
+    let (firstname, lastname, username) =
+        fetch_slack_user_identity(&auth.authed_user.access_token).await?;
+
     let ysws_status = fetch_ysws_status(&auth).await?;
 
     Ok(SlackApiResponse {
@@ -54,7 +58,9 @@ pub async fn exchange_slack_code_for_token(
     Ok(auth_response)
 }
 
-pub async fn fetch_ysws_status(user: &OAuthResponse) -> Result<YSWSStatus, Box<dyn std::error::Error>> {
+pub async fn fetch_ysws_status(
+    user: &OAuthResponse,
+) -> Result<YSWSStatus, Box<dyn std::error::Error>> {
     let client = Client::new();
     let json_body = json!({ "slack_id": user.authed_user.id });
     let mut headers = HeaderMap::new();
@@ -84,7 +90,9 @@ pub async fn fetch_ysws_status(user: &OAuthResponse) -> Result<YSWSStatus, Box<d
     }
 }
 
-pub async fn fetch_slack_user_identity(access_token: &str) -> Result<(String, Option<String>, String), Box<dyn std::error::Error>> {
+pub async fn fetch_slack_user_identity(
+    access_token: &str,
+) -> Result<(String, Option<String>, String), Box<dyn std::error::Error>> {
     let client = Client::new();
     let url = "https://slack.com/api/openid.connect.userInfo";
 
@@ -101,22 +109,25 @@ pub async fn fetch_slack_user_identity(access_token: &str) -> Result<(String, Op
 
     console_log!("User info: {:?}", user_info);
 
-    let mut trimmed_name = user_info.name.trim().split_whitespace().collect::<Vec<&str>>();
+    let mut trimmed_name = user_info
+        .name
+        .trim()
+        .split_whitespace()
+        .collect::<Vec<&str>>();
 
     let first_name;
     let mut last_name = None;
-    
+
     if !trimmed_name.is_empty() {
         first_name = trimmed_name[0].to_string();
         trimmed_name.remove(0);
-    
+
         if !trimmed_name.is_empty() {
             last_name = Some(trimmed_name.join(" "));
         }
     } else {
         first_name = "UnknownFirstName".to_string(); // or handle the case where the name is empty
     }
-
 
     Ok((first_name, last_name, user_info.name))
 }
