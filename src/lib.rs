@@ -66,7 +66,10 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
 
     match req.path().as_str() {
         "/verify_records" => {
-            process_verify_records_request(req, slack_oauth, airtable_api_key).await
+            if req.method() != Method::Post {
+                return Response::error("Method Not Allowed", 405);
+            }
+            initiate_record_verification(&airtable_api_key, &slack_oauth).await
         }
         "/verify_hash" => process_hash_verification(req, &slack_oauth).await,
         _ => process_api_request(req, slack_oauth, github_oauth, &airtable_api_key).await,
@@ -155,12 +158,7 @@ async fn process_api_payload(
     }
 
     if let Some(github_code) = payload.github_code {
-        match process_github_oauth(
-            github_code,
-            &github_oauth.client_id,
-            &github_oauth.client_secret,
-        )
-        .await
+        match GithubOauth::process_github_oauth(&github_oauth, github_code).await
         {
             Ok(auth) => temp_response.github = Some(auth),
             Err(e) => console_log!("GitHub OAuth Error: {}", e),

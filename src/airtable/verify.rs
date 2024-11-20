@@ -1,6 +1,5 @@
 use crate::{
-    console_error, console_log, fetch_submissions, hash_secret, update_submission, Method, Record,
-    Request, Response, Result, SlackOauth,
+    console_error, console_log, fetch_submissions, hash_secret, update_submission, Record, Response, Result, SlackOauth,
 };
 
 pub async fn verify_all_records(
@@ -36,18 +35,6 @@ pub async fn verify_all_records(
             }
         }
     }
-}
-
-pub async fn process_verify_records_request(
-    req: Request,
-    slack_oauth: SlackOauth,
-    jasper_api: String,
-) -> Result<Response> {
-    if req.method() != Method::Put {
-        return Response::error("Method Not Allowed", 405);
-    }
-
-    initiate_record_verification(&jasper_api, &slack_oauth).await
 }
 
 pub async fn initiate_record_verification(

@@ -30,3 +30,6 @@ url = "2.5.2"
 
 [features]
 default = ["console_error_panic_hook"]
+
+[patch.crates-io]
+wasm-bindgen = { git = "https://github.com/rustwasm/wasm-bindgen" }
