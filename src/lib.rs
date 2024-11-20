@@ -158,8 +158,7 @@ async fn process_api_payload(
     }
 
     if let Some(github_code) = payload.github_code {
-        match GithubOauth::process_github_oauth(&github_oauth, github_code).await
-        {
+        match GithubOauth::process_github_oauth(&github_oauth, github_code).await {
             Ok(auth) => temp_response.github = Some(auth),
             Err(e) => console_log!("GitHub OAuth Error: {}", e),
         }

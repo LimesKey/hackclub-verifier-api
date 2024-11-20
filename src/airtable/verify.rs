@@ -1,5 +1,6 @@
 use crate::{
-    console_error, console_log, fetch_submissions, hash_secret, update_submission, Record, Response, Result, SlackOauth,
+    console_error, console_log, fetch_submissions, hash_secret, update_submission, Record,
+    Response, Result, SlackOauth,
 };
 
 pub async fn verify_all_records(
